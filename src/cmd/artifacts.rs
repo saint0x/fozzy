@@ -255,12 +255,7 @@ fn export_reproducer_pack(config: &Config, run: &str, out: &Path) -> FozzyResult
     {
         export_artifacts_zip(&files, out)
     } else {
-        std::fs::create_dir_all(out)?;
-        validate_copy_targets_secure(&files, out)?;
-        for src in files {
-            copy_file_into_dir_secure(&src, out)?;
-        }
-        Ok(())
+        export_artifacts_dir_exact(&files, out)
     };
     let _ = std::fs::remove_dir_all(meta_dir);
     res
@@ -296,14 +291,7 @@ fn export_artifacts(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
         return Ok(());
     }
 
-    std::fs::create_dir_all(out)?;
-    validate_copy_targets_secure(&files, out)?;
-
-    for src in files {
-        copy_file_into_dir_secure(&src, out)?;
-    }
-
-    Ok(())
+    export_artifacts_dir_exact(&files, out)
 }
 
 fn artifacts_diff(config: &Config, left: &str, right: &str) -> FozzyResult<ArtifactDiff> {
@@ -679,19 +667,44 @@ fn validate_copy_targets_secure(files: &[PathBuf], out_dir: &Path) -> FozzyResul
         }
     }
 
-    if out_dir.exists() {
-        for entry in std::fs::read_dir(out_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !seen.contains(&name) {
-                return Err(crate::FozzyError::InvalidArgument(format!(
-                    "refusing to write into non-empty output directory with stale entries: {}",
-                    out_dir.display()
-                )));
-            }
+    Ok(())
+}
+
+fn export_artifacts_dir_exact(files: &[PathBuf], out_dir: &Path) -> FozzyResult<()> {
+    std::fs::create_dir_all(out_dir)?;
+    validate_copy_targets_secure(files, out_dir)?;
+    prune_stale_output_entries(files, out_dir)?;
+    for src in files {
+        copy_file_into_dir_secure(src, out_dir)?;
+    }
+    Ok(())
+}
+
+fn prune_stale_output_entries(files: &[PathBuf], out_dir: &Path) -> FozzyResult<()> {
+    let expected: BTreeSet<String> = files
+        .iter()
+        .filter_map(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
+        .collect();
+    for entry in std::fs::read_dir(out_dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if expected.contains(&name) {
+            continue;
+        }
+        let path = entry.path();
+        let md = std::fs::symlink_metadata(&path)?;
+        if md.file_type().is_symlink() {
+            return Err(crate::FozzyError::InvalidArgument(format!(
+                "refusing to remove symlinked stale output entry: {}",
+                path.display()
+            )));
+        }
+        if md.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
         }
     }
-
     Ok(())
 }
 
@@ -1020,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn pack_dir_rejects_stale_preexisting_files() {
+    fn pack_dir_prunes_stale_preexisting_files() {
         let root = std::env::temp_dir().join(format!("fozzy-pack-stale-dir-{}", uuid::Uuid::new_v4()));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
@@ -1037,8 +1050,30 @@ mod tests {
         std::fs::create_dir_all(&out_dir).expect("out");
         std::fs::write(out_dir.join("stale.txt"), b"old").expect("stale");
 
-        let err = export_reproducer_pack(&cfg, "r1", &out_dir).expect_err("must reject stale output dir");
-        assert!(err.to_string().contains("non-empty output directory with stale entries"));
+        export_reproducer_pack(&cfg, "r1", &out_dir).expect("pack should prune stale files");
+        assert!(!out_dir.join("stale.txt").exists(), "stale entry should be removed");
+        assert!(out_dir.join("manifest.json").exists(), "expected artifact should exist");
+    }
+
+    #[test]
+    fn export_dir_prunes_stale_preexisting_files() {
+        let root = std::env::temp_dir().join(format!("fozzy-export-stale-dir-{}", uuid::Uuid::new_v4()));
+        let run_dir = root.join(".fozzy").join("runs").join("r1");
+        std::fs::create_dir_all(&run_dir).expect("mkdir");
+        std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
+        std::fs::write(run_dir.join("manifest.json"), valid_manifest_json("r1")).expect("manifest");
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+        };
+
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("out");
+        std::fs::write(out_dir.join("stale.txt"), b"old").expect("stale");
+
+        export_artifacts(&cfg, "r1", &out_dir).expect("export should prune stale files");
+        assert!(!out_dir.join("stale.txt").exists(), "stale entry should be removed");
+        assert!(out_dir.join("manifest.json").exists(), "expected artifact should exist");
     }
 
     #[test]
