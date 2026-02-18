@@ -202,8 +202,9 @@ fn write_zip_entry_secure(out_dir: &Path, entry_name: &str, bytes: &[u8]) -> Foz
     Ok(())
 }
 
-fn validate_zip_target_secure(out_dir: &Path, rel: &Path, seen_targets: &mut HashSet<PathBuf>) -> FozzyResult<()> {
-    if !seen_targets.insert(rel.to_path_buf()) {
+fn validate_zip_target_secure(out_dir: &Path, rel: &Path, seen_targets: &mut HashSet<String>) -> FozzyResult<()> {
+    let key = portable_rel_key(rel);
+    if !seen_targets.insert(key) {
         return Err(FozzyError::InvalidArgument(format!(
             "duplicate output file in archive is not allowed: {}",
             rel.display()
@@ -249,6 +250,20 @@ fn validate_zip_target_secure(out_dir: &Path, rel: &Path, seen_targets: &mut Has
     }
 
     Ok(())
+}
+
+fn portable_rel_key(rel: &Path) -> String {
+    let mut out = String::new();
+    for (idx, comp) in rel.components().enumerate() {
+        use std::path::Component;
+        if let Component::Normal(seg) = comp {
+            if idx > 0 {
+                out.push('/');
+            }
+            out.push_str(&seg.to_string_lossy().to_lowercase());
+        }
+    }
+    out
 }
 
 fn normalize_zip_entry_rel_path(name: &str) -> FozzyResult<PathBuf> {
@@ -458,5 +473,56 @@ mod tests {
             let err = normalize_zip_entry_rel_path(bad).expect_err("must reject unsafe special filename");
             assert!(err.to_string().contains("unsafe archive entry path rejected"));
         }
+    }
+
+    #[test]
+    fn import_rejects_duplicate_entry_aliases() {
+        let root = std::env::temp_dir().join(format!("fozzy-corpus-dup-alias-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("root");
+        let zip_path = root.join("in.zip");
+
+        {
+            let file = File::create(&zip_path).expect("zip create");
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("dup.bin", opts).expect("start 1");
+            zip.write_all(b"first").expect("write 1");
+            zip.start_file("./dup.bin", opts).expect("start 2");
+            zip.write_all(b"second").expect("write 2");
+            zip.finish().expect("finish");
+        }
+
+        let out = root.join("out");
+        std::fs::create_dir_all(&out).expect("out");
+
+        let err = import_zip(&zip_path, &out).expect_err("must reject alias duplicates");
+        assert!(err.to_string().contains("duplicate output file in archive is not allowed"));
+        assert!(!out.join("dup.bin").exists(), "duplicate rejection should be failure-atomic");
+    }
+
+    #[test]
+    fn import_rejects_case_insensitive_duplicate_entry_names() {
+        let root = std::env::temp_dir().join(format!("fozzy-corpus-dup-case-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("root");
+        let zip_path = root.join("in.zip");
+
+        {
+            let file = File::create(&zip_path).expect("zip create");
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("dup.bin", opts).expect("start 1");
+            zip.write_all(b"first").expect("write 1");
+            zip.start_file("DUP.BIN", opts).expect("start 2");
+            zip.write_all(b"second").expect("write 2");
+            zip.finish().expect("finish");
+        }
+
+        let out = root.join("out");
+        std::fs::create_dir_all(&out).expect("out");
+
+        let err = import_zip(&zip_path, &out).expect_err("must reject case-insensitive duplicates");
+        assert!(err.to_string().contains("duplicate output file in archive is not allowed"));
+        assert!(!out.join("dup.bin").exists(), "duplicate rejection should be failure-atomic");
+        assert!(!out.join("DUP.BIN").exists(), "duplicate rejection should be failure-atomic");
     }
 }

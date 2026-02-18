@@ -134,6 +134,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ `artifacts pack/export --out <dir>` and `corpus import --out <dir>` now preflight all targets so symlink-block failures are atomic (no partial outputs written)
 - ✅ `corpus import` now rejects Windows-style unsafe archive paths (`..\\`, drive-prefixed, UNC-root) on all platforms
 - ✅ `corpus import` now rejects unsafe/special archive filenames (control chars, NUL-containing names, Windows-reserved names, trailing-dot/space, cross-platform invalid chars)
+- ✅ `corpus import` now rejects duplicate archive targets including alias/case-collision forms (for example `dup.bin`, `./dup.bin`, `DUP.BIN`) to prevent silent last-write-wins
 - ⬜ CLI contract test matrix across subcommands (flag parity + exit-code matrix) still pending
 - ⬜ Filesystem chaos/security test matrix (read-only, ENOSPC, SIGINT/SIGTERM, symlink/path escape) still pending
 - ⬜ Concurrent stress and retention/repro gates in CI still pending
