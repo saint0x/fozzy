@@ -146,6 +146,7 @@ pub fn explore(config: &Config, scenario_path: ScenarioPath, opt: &ExploreOption
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
     std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&events)?)?;
+    crate::write_timeline(&events, &artifacts_dir.join("timeline.json"))?;
 
     if matches!(opt.reporter, Reporter::Junit) {
         std::fs::write(artifacts_dir.join("junit.xml"), crate::render_junit_xml(&summary))?;
@@ -216,6 +217,7 @@ pub fn replay_explore_trace(config: &Config, trace: &TraceFile) -> FozzyResult<c
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
     std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&events)?)?;
+    crate::write_timeline(&events, &artifacts_dir.join("timeline.json"))?;
 
     Ok(crate::RunResult { summary })
 }

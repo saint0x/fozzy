@@ -123,6 +123,31 @@ pub enum Step {
         #[serde(default)]
         save_body_as: Option<String>,
     },
+    ProcWhen {
+        cmd: String,
+        #[serde(default)]
+        args: Option<Vec<String>>,
+        exit_code: i32,
+        #[serde(default)]
+        stdout: Option<String>,
+        #[serde(default)]
+        stderr: Option<String>,
+        #[serde(default)]
+        times: Option<u64>,
+    },
+    ProcSpawn {
+        cmd: String,
+        #[serde(default)]
+        args: Option<Vec<String>>,
+        #[serde(default)]
+        expect_exit: Option<i32>,
+        #[serde(default)]
+        expect_stdout: Option<String>,
+        #[serde(default)]
+        expect_stderr: Option<String>,
+        #[serde(default)]
+        save_stdout_as: Option<String>,
+    },
     Fail { message: String },
     Panic { message: String },
 }

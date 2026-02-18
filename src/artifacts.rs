@@ -48,6 +48,7 @@ fn artifacts_list(config: &Config, run: &str) -> FozzyResult<Vec<ArtifactEntry>>
     let mut out = Vec::new();
 
     push_if_exists(&mut out, ArtifactKind::Trace, artifacts_dir.join("trace.fozzy"))?;
+    push_if_exists(&mut out, ArtifactKind::Timeline, artifacts_dir.join("timeline.json"))?;
     push_if_exists(&mut out, ArtifactKind::Report, artifacts_dir.join("report.json"))?;
     push_if_exists(&mut out, ArtifactKind::Events, artifacts_dir.join("events.json"))?;
     push_if_exists(&mut out, ArtifactKind::Report, artifacts_dir.join("report.html"))?;

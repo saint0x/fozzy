@@ -299,6 +299,7 @@ pub fn run_scenario(config: &Config, scenario_path: ScenarioPath, opt: &RunOptio
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report_summary)?)?;
     std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&run.events)?)?;
+    crate::write_timeline(&run.events, &artifacts_dir.join("timeline.json"))?;
 
     if matches!(opt.reporter, Reporter::Junit) {
         std::fs::write(artifacts_dir.join("junit.xml"), crate::render_junit_xml(&report_summary))?;
@@ -394,6 +395,7 @@ pub fn replay_trace(config: &Config, trace_path: TracePath, opt: &ReplayOptions)
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
     if opt.dump_events {
         std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&run.events)?)?;
+        crate::write_timeline(&run.events, &artifacts_dir.join("timeline.json"))?;
     }
 
     Ok(RunResult { summary })
@@ -705,6 +707,7 @@ struct ExecCtx {
     fs: BTreeMap<String, String>,
     fs_snapshots: BTreeMap<String, BTreeMap<String, String>>,
     http_rules: Vec<HttpRule>,
+    proc_rules: Vec<ProcRule>,
     decisions: DecisionLog,
     events: Vec<TraceEvent>,
     findings: Vec<Finding>,
@@ -725,6 +728,7 @@ impl ExecCtx {
             fs: BTreeMap::new(),
             fs_snapshots: BTreeMap::new(),
             http_rules: Vec::new(),
+            proc_rules: Vec::new(),
             decisions: DecisionLog::default(),
             events: Vec::new(),
             findings: Vec::new(),
@@ -1147,6 +1151,101 @@ impl ExecCtx {
                 Ok(())
             }
 
+            crate::Step::ProcWhen {
+                cmd,
+                args,
+                exit_code,
+                stdout,
+                stderr,
+                times,
+            } => {
+                self.proc_rules.push(ProcRule {
+                    cmd: cmd.clone(),
+                    args: args.clone().unwrap_or_default(),
+                    exit_code: *exit_code,
+                    stdout: stdout.clone().unwrap_or_default(),
+                    stderr: stderr.clone().unwrap_or_default(),
+                    remaining: times.unwrap_or(u64::MAX),
+                });
+                Ok(())
+            }
+
+            crate::Step::ProcSpawn {
+                cmd,
+                args,
+                expect_exit,
+                expect_stdout,
+                expect_stderr,
+                save_stdout_as,
+            } => {
+                let call_args = args.clone().unwrap_or_default();
+                let idx = self.proc_rules.iter().position(|r| {
+                    r.remaining > 0 && r.cmd == *cmd && r.args == call_args
+                });
+                let Some(idx) = idx else {
+                    return Err(Finding {
+                        kind: FindingKind::Assertion,
+                        title: "proc_unmatched".to_string(),
+                        message: format!("no proc mock matched {cmd:?} {:?}", call_args),
+                        location: None,
+                    });
+                };
+
+                let mut rule = self.proc_rules[idx].clone();
+                if rule.remaining != u64::MAX {
+                    rule.remaining = rule.remaining.saturating_sub(1);
+                }
+                self.proc_rules[idx] = rule.clone();
+
+                self.events.push(TraceEvent {
+                    time_ms: self.clock.now_ms(),
+                    name: "proc_spawn".to_string(),
+                    fields: serde_json::Map::from_iter([
+                        ("cmd".to_string(), serde_json::Value::String(cmd.clone())),
+                        (
+                            "exit_code".to_string(),
+                            serde_json::Value::Number(serde_json::Number::from(rule.exit_code)),
+                        ),
+                    ]),
+                });
+
+                if let Some(expected) = expect_exit {
+                    if rule.exit_code != *expected {
+                        return Err(Finding {
+                            kind: FindingKind::Assertion,
+                            title: "proc_exit".to_string(),
+                            message: format!("expected exit {expected}, got {}", rule.exit_code),
+                            location: None,
+                        });
+                    }
+                }
+                if let Some(expected) = expect_stdout {
+                    if &rule.stdout != expected {
+                        return Err(Finding {
+                            kind: FindingKind::Assertion,
+                            title: "proc_stdout".to_string(),
+                            message: "proc stdout mismatch".to_string(),
+                            location: None,
+                        });
+                    }
+                }
+                if let Some(expected) = expect_stderr {
+                    if &rule.stderr != expected {
+                        return Err(Finding {
+                            kind: FindingKind::Assertion,
+                            title: "proc_stderr".to_string(),
+                            message: "proc stderr mismatch".to_string(),
+                            location: None,
+                        });
+                    }
+                }
+                if let Some(key) = save_stdout_as {
+                    self.kv.insert(key.clone(), rule.stdout.clone());
+                }
+
+                Ok(())
+            }
+
             crate::Step::Fail { message } => Err(Finding {
                 kind: FindingKind::Assertion,
                 title: "fail".to_string(),
@@ -1172,6 +1271,16 @@ struct HttpRule {
     body: Option<String>,
     json: Option<serde_json::Value>,
     delay_ms: u64,
+    remaining: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ProcRule {
+    cmd: String,
+    args: Vec<String>,
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
     remaining: u64,
 }
 

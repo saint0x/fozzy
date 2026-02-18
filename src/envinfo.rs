@@ -75,8 +75,8 @@ pub fn env_info(_config: &crate::Config) -> EnvInfo {
     capabilities.insert(
         "proc".to_string(),
         CapabilityInfo {
-            backend: "os".to_string(),
-            deterministic: false,
+            backend: "scripted".to_string(),
+            deterministic: true,
         },
     );
 

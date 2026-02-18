@@ -16,6 +16,7 @@ mod usage;
 mod reporting;
 mod reporting_cmd;
 mod scenario;
+mod timeline;
 mod tracefile;
 
 pub use artifacts::*;
@@ -34,4 +35,5 @@ pub use usage::*;
 pub use reporting::*;
 pub use reporting_cmd::*;
 pub use scenario::*;
+pub use timeline::*;
 pub use tracefile::*;
