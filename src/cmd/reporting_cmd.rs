@@ -402,6 +402,31 @@ mod tests {
     }
 
     #[test]
+    fn query_identity_aliases_cover_all_documented_fields() {
+        let value = serde_json::json!({
+            "identity": {
+                "runId": "run-123",
+                "seed": 7,
+                "tracePath": "t.fozzy",
+                "reportPath": "r.json",
+                "artifactsDir": ".fozzy/runs/run-123"
+            }
+        });
+        let cases = [
+            ("runId", serde_json::json!("run-123")),
+            ("seed", serde_json::json!(7)),
+            ("tracePath", serde_json::json!("t.fozzy")),
+            ("reportPath", serde_json::json!("r.json")),
+            ("artifactsDir", serde_json::json!(".fozzy/runs/run-123")),
+            ("identity.runId", serde_json::json!("run-123")),
+        ];
+        for (expr, expected) in cases {
+            let out = query_value(&value, expr).expect("query");
+            assert_eq!(out, expected, "expr={expr}");
+        }
+    }
+
+    #[test]
     fn query_miss_reports_suggestion() {
         let value = serde_json::json!({
             "identity": {"runId": "run-123"}

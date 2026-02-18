@@ -464,4 +464,20 @@ mod tests {
         let loaded = TraceFile::read_json(&out).expect("trace exists");
         assert_eq!(loaded.format, "fozzy-trace");
     }
+
+    #[test]
+    fn truncated_trace_is_rejected() {
+        let path = temp_file("truncated.fozzy");
+        std::fs::write(&path, br#"{"format":"fozzy-trace""#).expect("write");
+        let err = TraceFile::read_json(&path).expect_err("must fail");
+        assert!(err.to_string().contains("failed to parse trace"));
+    }
+
+    #[test]
+    fn random_bytes_trace_is_rejected() {
+        let path = temp_file("random.fozzy");
+        std::fs::write(&path, [0_u8, 159, 146, 150, 255, 0, 1, 2]).expect("write");
+        let err = TraceFile::read_json(&path).expect_err("must fail");
+        assert!(err.to_string().contains("failed to parse trace"));
+    }
 }

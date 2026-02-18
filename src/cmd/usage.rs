@@ -55,7 +55,7 @@ pub fn usage_doc() -> UsageDoc {
             UsageItem {
                 command: "fozzy trace verify".to_string(),
                 when: "Validate trace integrity/version before replaying or handing artifacts to CI/other teams.".to_string(),
-                how: "fozzy trace verify .fozzy/runs/<runId>/trace.fozzy --json (checks checksum and reports stale schema warnings).".to_string(),
+                how: "fozzy trace verify .fozzy/runs/<runId>/trace.fozzy --json (add --strict to fail if schema warnings are present).".to_string(),
             },
             UsageItem {
                 command: "fozzy shrink".to_string(),

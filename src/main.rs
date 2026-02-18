@@ -36,6 +36,10 @@ struct Cli {
     #[arg(long, global = true)]
     no_color: bool,
 
+    /// Treat warning-like conditions as errors (non-zero exit).
+    #[arg(long, global = true)]
+    strict: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -334,7 +338,7 @@ fn normalize_global_args(args: impl IntoIterator<Item = String>) -> Vec<String> 
     while i < all.len() {
         let arg = &all[i];
         match arg.as_str() {
-            "--json" | "--no-color" => {
+            "--json" | "--no-color" | "--strict" => {
                 globals.push(arg.clone());
                 i += 1;
             }
@@ -347,7 +351,11 @@ fn normalize_global_args(args: impl IntoIterator<Item = String>) -> Vec<String> 
                     i += 1;
                 }
             }
-            _ if arg.starts_with("--config=") || arg.starts_with("--cwd=") || arg.starts_with("--log=") => {
+            _ if arg.starts_with("--config=")
+                || arg.starts_with("--cwd=")
+                || arg.starts_with("--log=")
+                || arg.starts_with("--strict=") =>
+            {
                 globals.push(arg.clone());
                 i += 1;
             }
@@ -406,6 +414,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
+            enforce_strict_run(cli, &run.summary)?;
             Ok(exit_code_for_status(run.summary.status))
         }
 
@@ -434,6 +443,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
+            enforce_strict_run(cli, &run.summary)?;
             Ok(exit_code_for_status(run.summary.status))
         }
 
@@ -474,6 +484,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
+            enforce_strict_run(cli, &run.summary)?;
             Ok(exit_code_for_status(run.summary.status))
         }
 
@@ -511,6 +522,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
+            enforce_strict_run(cli, &run.summary)?;
             Ok(exit_code_for_status(run.summary.status))
         }
 
@@ -532,6 +544,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
+            enforce_strict_run(cli, &run.summary)?;
             Ok(exit_code_for_status(run.summary.status))
         }
 
@@ -540,6 +553,12 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 TraceCommand::Verify { path } => {
                     let out = fozzy::verify_trace_file(path)?;
                     print_json_or_text(cli, &out)?;
+                    if cli.strict && !out.warnings.is_empty() {
+                        return Err(anyhow::anyhow!(
+                            "strict mode: trace verify produced warnings: {}",
+                            out.warnings.join("; ")
+                        ));
+                    }
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -564,6 +583,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 },
             )?;
             print_run_summary(cli, &result.result.summary)?;
+            enforce_strict_run(cli, &result.result.summary)?;
             Ok(exit_code_for_status(result.result.summary.status))
         }
 
@@ -601,6 +621,23 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 },
             )?;
             print_json_or_text(cli, &report)?;
+            if cli.strict {
+                let mut reasons = Vec::new();
+                if !report.issues.is_empty() {
+                    reasons.push(format!("{} issue(s)", report.issues.len()));
+                }
+                if let Some(signals) = &report.nondeterminism_signals {
+                    if !signals.is_empty() {
+                        reasons.push(format!("{} nondeterminism signal(s)", signals.len()));
+                    }
+                }
+                if !reasons.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "strict mode: doctor reported {}",
+                        reasons.join(" and ")
+                    ));
+                }
+            }
             Ok(ExitCode::SUCCESS)
         }
 
@@ -635,6 +672,27 @@ fn print_run_summary(cli: &Cli, summary: &RunSummary) -> anyhow::Result<()> {
         println!("{}", summary.pretty());
     }
     Ok(())
+}
+
+fn enforce_strict_run(cli: &Cli, summary: &RunSummary) -> anyhow::Result<()> {
+    if !cli.strict {
+        return Ok(());
+    }
+
+    let warnings: Vec<&str> = summary
+        .findings
+        .iter()
+        .filter(|f| f.title == "stale_trace_schema")
+        .map(|f| f.message.as_str())
+        .collect();
+    if warnings.is_empty() {
+        return Ok(());
+    }
+
+    Err(anyhow::anyhow!(
+        "strict mode: run contains warning findings: {}",
+        warnings.join("; ")
+    ))
 }
 
 fn print_json_or_text<T: serde::Serialize>(cli: &Cli, value: &T) -> anyhow::Result<()> {

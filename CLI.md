@@ -77,4 +77,5 @@ GLOBAL FLAGS:
   --cwd <path>
   --log <trace|debug|info|warn|error>
   --json                 machine-readable output
+  --strict               treat warning-like conditions as errors
   --no-color

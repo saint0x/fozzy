@@ -130,7 +130,8 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ⬜ CLI contract test matrix across subcommands (flag parity + exit-code matrix) still pending
 - ⬜ Filesystem chaos/security test matrix (read-only, ENOSPC, SIGINT/SIGTERM, symlink/path escape) still pending
 - ⬜ Concurrent stress and retention/repro gates in CI still pending
-- ⬜ `--strict` warning-to-error mode remains pending
+- ✅ `--strict` warning-to-error mode added for run/replay/shrink warning findings, `trace verify`, and `doctor`
+- ✅ Local parity/golden hardening tests added: run-like common flag parsing and end-to-end `record -> replay -> shrink -> replay(min)` for run/fuzz/explore
 - ⬜ End-to-end golden flows (`record -> replay -> shrink -> replay(min)`) per mode remain pending
 
 ## Production Backlog (Next Execution Order)
