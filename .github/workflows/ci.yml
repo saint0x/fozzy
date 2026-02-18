@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Artifacts Export Integrity Gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="cargo run --quiet --"
+          TMP="$(mktemp -d)"
+
+          TRACE="$TMP/unicode-😀.fozzy"
+          cat > "$TRACE" <<'EOF'
+          {"format":"fozzy-trace","version":2,"engine":{"version":"0.1.0"},"mode":"run","scenario_path":null,"scenario":{"version":1,"name":"x","steps":[]},"decisions":[],"events":[],"summary":{"status":"pass","mode":"run","identity":{"runId":"r1","seed":1},"startedAt":"2026-01-01T00:00:00Z","finishedAt":"2026-01-01T00:00:00Z","durationMs":0}}
+          EOF
+
+          ZIP_OK="$TMP/unicode-export.zip"
+          $BIN artifacts export "$TRACE" --out "$ZIP_OK"
+          test -f "$ZIP_OK"
+          unzip -t "$ZIP_OK"
+
+          ZIP_MISSING="$TMP/missing-input.zip"
+          if $BIN artifacts export "$TMP/does-not-exist.fozzy" --out "$ZIP_MISSING"; then
+            echo "expected missing input export to fail" >&2
+            exit 1
+          fi
+          test ! -f "$ZIP_MISSING"

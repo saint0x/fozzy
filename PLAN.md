@@ -124,9 +124,14 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ Trace integrity checksum validation on read/replay
 - ✅ `fozzy trace verify <path>` integrity + schema warning command
 - ✅ Replay now emits explicit stale-schema warnings for older trace versions
+- ✅ Artifacts export now fails non-zero when no artifacts are produced or input run/trace is missing
+- ✅ Artifacts export ZIP writes are atomic (no empty/corrupt partial output on failure)
+- ✅ CI gate added: export artifact ZIP must exist and pass `unzip -t` integrity validation
 - ⬜ CLI contract test matrix across subcommands (flag parity + exit-code matrix) still pending
 - ⬜ Filesystem chaos/security test matrix (read-only, ENOSPC, SIGINT/SIGTERM, symlink/path escape) still pending
 - ⬜ Concurrent stress and retention/repro gates in CI still pending
+- ⬜ `--strict` warning-to-error mode remains pending
+- ⬜ End-to-end golden flows (`record -> replay -> shrink -> replay(min)`) per mode remain pending
 
 ## Production Backlog (Next Execution Order)
 1. ✅ Expand M3 with stricter network capability contracts and richer record/replay semantics.

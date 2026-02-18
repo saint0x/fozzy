@@ -192,7 +192,9 @@ fn export_artifacts(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
     files.dedup();
 
     if files.is_empty() {
-        return Ok(());
+        return Err(crate::FozzyError::InvalidArgument(format!(
+            "no artifacts found for {run:?}"
+        )));
     }
 
     if out
@@ -540,6 +542,23 @@ mod tests {
         };
         let err = export_artifacts(&cfg, "does-not-exist-input.fozzy", &out).expect_err("must fail");
         assert!(err.to_string().contains("not found"));
+        assert!(!out.exists(), "zip should not exist on failure");
+    }
+
+    #[test]
+    fn export_empty_run_errors() {
+        let root = std::env::temp_dir().join(format!("fozzy-artifacts-empty-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let run_id = "empty-run";
+        std::fs::create_dir_all(root.join(".fozzy").join("runs").join(run_id)).expect("create run dir");
+        let out = root.join("empty.zip");
+
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+        };
+        let err = export_artifacts(&cfg, run_id, &out).expect_err("must fail");
+        assert!(err.to_string().contains("no artifacts found"));
         assert!(!out.exists(), "zip should not exist on failure");
     }
 }
