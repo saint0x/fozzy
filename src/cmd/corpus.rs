@@ -252,6 +252,18 @@ fn validate_zip_target_secure(out_dir: &Path, rel: &Path, seen_targets: &mut Has
 }
 
 fn normalize_zip_entry_rel_path(name: &str) -> FozzyResult<PathBuf> {
+    // Archive entry names must be portable relative POSIX-style paths.
+    // Reject Windows-style separators/prefixes/UNC roots on every host.
+    if name.starts_with("//")
+        || name.starts_with("\\\\")
+        || name.contains('\\')
+        || is_windows_drive_prefixed(name)
+    {
+        return Err(FozzyError::InvalidArgument(format!(
+            "unsafe archive entry path rejected: {name}"
+        )));
+    }
+
     let path = Path::new(name);
     let mut rel = PathBuf::new();
     for comp in path.components() {
@@ -272,6 +284,11 @@ fn normalize_zip_entry_rel_path(name: &str) -> FozzyResult<PathBuf> {
         )));
     }
     Ok(rel)
+}
+
+fn is_windows_drive_prefixed(name: &str) -> bool {
+    let b = name.as_bytes();
+    b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
 #[cfg(test)]
@@ -343,5 +360,19 @@ mod tests {
         assert_eq!(std::fs::read(&victim).expect("victim read"), b"safe");
         assert!(!out.join("good-1.bin").exists(), "good-1 should not be written");
         assert!(!out.join("good-2.bin").exists(), "good-2 should not be written");
+    }
+
+    #[test]
+    fn normalize_rejects_windows_style_unsafe_paths() {
+        for bad in [
+            r"..\\evil_win.bin",
+            r"C:\evil_drive.bin",
+            "C:evil_drive.bin",
+            r"\\server\share\evil_unc.bin",
+            "//server/share/evil_unc.bin",
+        ] {
+            let err = normalize_zip_entry_rel_path(bad).expect_err("must reject windows-style unsafe path");
+            assert!(err.to_string().contains("unsafe archive entry path rejected"));
+        }
     }
 }
