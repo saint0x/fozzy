@@ -16,6 +16,45 @@ Related docs:
 
 ⸻
 
+Implementation Status (as of 2026-02-18)
+
+This repo is actively implementing this plan. Current state:
+
+Completed / working (v0.1)
+  • Single Rust crate (`src/`), shipping a `fozzy` binary
+  • CLI scaffold (init/test/run/replay/shrink/corpus/artifacts/report/doctor/env/version/usage)
+  • Deterministic core (seeded RNG + virtual time + decision log)
+  • Trace recording (.fozzy JSON) on failure or explicit `--record`
+  • Deterministic replay from trace + basic artifacts (report.json, events.json, trace.fozzy)
+  • Basic shrinking (step deletion shrink for scenario traces)
+  • JUnit + HTML report rendering (minimal)
+  • `fozzy usage` agent-oriented “what to use when” overview
+  • Basic fuzzing loop (`fozzy fuzz fn:kv`): mutation + simple coverage feedback + crash recording + replay/shrink
+
+Not yet implemented (planned)
+  • Full coverage-guided fuzzing + crash dedup (M5)
+  • Distributed exploration runner (M6)
+  • Multi-dimensional shrinking (input + schedule + faults) (M7)
+  • Full capability virtualization (net/fs/http/proc record+replay) (M3)
+  • TS SDK packaging (M8)
+  • CI polish + flaky detection + stable exit semantics across all modes (M9)
+  • Hardening/perf/determinism audits (M10)
+
+Milestones (tracked)
+  • M0 Foundations: DONE (repo, build, CLI skeleton, JSON output, semver)
+  • M1 Deterministic Core: PARTIAL (RNG/time/decision log/record+replay; scheduler not yet)
+  • M2 Test Framework: PARTIAL (scenario runner + assertions; full discovery DSL not yet)
+  • M3 Capabilities: NOT DONE
+  • M4 Replay + Artifacts: PARTIAL (trace/events/report; timeline/diffs not yet)
+  • M5 Fuzzing Engine: PARTIAL (basic mutation+feedback loop; target system not yet generalized)
+  • M6 Distributed Explore: NOT DONE
+  • M7 Shrinking Engine: PARTIAL (basic step shrink only)
+  • M8 TypeScript SDK: NOT DONE (spec exists in SDK-TS.md)
+  • M9 CI + Reporting: PARTIAL (JUnit/HTML emitted; CI UX not yet complete)
+  • M10 Hardening: NOT DONE
+
+⸻
+
 0. Goals
 
 Primary Goal

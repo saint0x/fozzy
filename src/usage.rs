@@ -60,7 +60,7 @@ pub fn usage_doc() -> UsageDoc {
             UsageItem {
                 command: "fozzy fuzz".to_string(),
                 when: "Find new bugs automatically by mutating inputs and exploring states; use for robustness/security testing.".to_string(),
-                how: "fozzy fuzz <target> --mode coverage --time 30s --corpus .fozzy/corpora/<name> (planned).".to_string(),
+                how: "fozzy fuzz fn:kv --mode coverage --time 30s --max-input 4096 --corpus .fozzy/corpora/kv --crash-only.".to_string(),
             },
             UsageItem {
                 command: "fozzy explore".to_string(),
@@ -100,4 +100,3 @@ pub fn usage_doc() -> UsageDoc {
         ],
     }
 }
-

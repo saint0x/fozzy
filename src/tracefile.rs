@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use std::path::{Path, PathBuf};
 
-use crate::{Decision, RunMode, RunSummary, ScenarioV1Steps, VersionInfo};
+use crate::{Decision, FuzzTrace, RunMode, RunSummary, ScenarioV1Steps, VersionInfo};
 
 #[derive(Debug, Clone)]
 pub struct TracePath {
@@ -29,6 +29,8 @@ pub struct TraceFile {
     pub mode: RunMode,
     pub scenario_path: Option<String>,
     pub scenario: Option<ScenarioV1Steps>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuzz: Option<FuzzTrace>,
     pub decisions: Vec<Decision>,
     pub events: Vec<TraceEvent>,
     pub summary: RunSummary,
@@ -58,7 +60,26 @@ impl TraceFile {
             mode,
             scenario_path,
             scenario,
+            fuzz: None,
             decisions,
+            events,
+            summary,
+        }
+    }
+
+    pub fn new_fuzz(target: String, input: &[u8], events: Vec<TraceEvent>, summary: RunSummary) -> Self {
+        Self {
+            format: "fozzy-trace".to_string(),
+            version: 1,
+            engine: crate::version_info(),
+            mode: RunMode::Fuzz,
+            scenario_path: None,
+            scenario: None,
+            fuzz: Some(FuzzTrace {
+                target,
+                input_hex: bytes_to_hex(input),
+            }),
+            decisions: Vec::new(),
             events,
             summary,
         }
@@ -80,3 +101,12 @@ impl TraceFile {
     }
 }
 
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len().saturating_mul(2));
+    for b in bytes {
+        out.push(TABLE[(b >> 4) as usize] as char);
+        out.push(TABLE[(b & 0x0F) as usize] as char);
+    }
+    out
+}

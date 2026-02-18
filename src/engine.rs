@@ -326,6 +326,10 @@ pub fn run_scenario(config: &Config, scenario_path: ScenarioPath, opt: &RunOptio
 
 pub fn replay_trace(config: &Config, trace_path: TracePath, opt: &ReplayOptions) -> FozzyResult<RunResult> {
     let trace = TraceFile::read_json(trace_path.as_path())?;
+    if trace.fuzz.is_some() && trace.scenario.is_none() {
+        return crate::replay_fuzz_trace(config, &trace);
+    }
+
     let seed = trace.summary.identity.seed;
     let run_id = Uuid::new_v4().to_string();
 
@@ -387,6 +391,9 @@ pub fn replay_trace(config: &Config, trace_path: TracePath, opt: &ReplayOptions)
 
 pub fn shrink_trace(config: &Config, trace_path: TracePath, opt: &ShrinkOptions) -> FozzyResult<ShrinkResult> {
     let trace = TraceFile::read_json(trace_path.as_path())?;
+    if trace.fuzz.is_some() && trace.scenario.is_none() {
+        return crate::shrink_fuzz_trace(config, trace_path, opt);
+    }
     let seed = trace.summary.identity.seed;
 
     let scenario = trace

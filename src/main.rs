@@ -8,7 +8,8 @@ use std::process::ExitCode;
 
 use fozzy::{
     ArtifactCommand, Config, CorpusCommand, ExitStatus, FozzyDuration, InitTemplate, ReportCommand,
-    Reporter, RunOptions, RunSummary, ScenarioPath, ShrinkMinimize, TracePath,
+    FuzzMode, FuzzOptions, FuzzTarget, Reporter, RunOptions, RunSummary, ScenarioPath,
+    ShrinkMinimize, TracePath,
 };
 
 #[derive(Debug, Parser)]
@@ -111,6 +112,42 @@ enum Command {
     /// Coverage-guided or property-based fuzzing
     Fuzz {
         target: String,
+
+        #[arg(long, default_value = "coverage")]
+        mode: FuzzMode,
+
+        #[arg(long)]
+        seed: Option<u64>,
+
+        #[arg(long)]
+        time: Option<FozzyDuration>,
+
+        #[arg(long)]
+        runs: Option<u64>,
+
+        #[arg(long, default_value_t = 4096)]
+        max_input: usize,
+
+        #[arg(long)]
+        corpus: Option<PathBuf>,
+
+        #[arg(long)]
+        mutator: Option<String>,
+
+        #[arg(long)]
+        shrink: bool,
+
+        #[arg(long)]
+        record: Option<PathBuf>,
+
+        #[arg(long, default_value = "pretty")]
+        reporter: Reporter,
+
+        #[arg(long)]
+        crash_only: bool,
+
+        #[arg(long)]
+        minimize: bool,
     },
 
     /// Deterministic distributed schedule + fault exploration
@@ -275,9 +312,42 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
             Ok(exit_code_for_status(run.summary.status))
         }
 
-        Command::Fuzz { target } => {
-            print_error_json_or_text(cli, "not_implemented", format!("fuzz target not implemented in v0.1: {target}"))?;
-            Ok(ExitCode::from(2))
+        Command::Fuzz {
+            target,
+            mode,
+            seed,
+            time,
+            runs,
+            max_input,
+            corpus,
+            mutator,
+            shrink,
+            record,
+            reporter,
+            crash_only,
+            minimize,
+        } => {
+            let target: FuzzTarget = target.parse()?;
+            let run = fozzy::fuzz(
+                config,
+                &target,
+                &FuzzOptions {
+                    mode: *mode,
+                    seed: *seed,
+                    time: time.map(|d| d.0),
+                    runs: *runs,
+                    max_input_bytes: *max_input,
+                    corpus_dir: corpus.clone(),
+                    mutator: mutator.clone(),
+                    shrink: *shrink,
+                    record_trace_to: record.clone(),
+                    reporter: *reporter,
+                    crash_only: *crash_only,
+                    minimize: *minimize,
+                },
+            )?;
+            print_run_summary(cli, &run.summary)?;
+            Ok(exit_code_for_status(run.summary.status))
         }
 
         Command::Explore { scenario } => {
