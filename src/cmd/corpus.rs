@@ -124,6 +124,7 @@ fn import_zip(zip_path: &Path, out_dir: &Path) -> FozzyResult<()> {
         if f.is_dir() {
             continue;
         }
+        validate_zip_entry_name_raw(f.name_raw(), f.name())?;
         let rel = normalize_zip_entry_rel_path(f.name())?;
         validate_zip_target_secure(out_dir, &rel, &mut seen_targets)?;
     }
@@ -135,6 +136,7 @@ fn import_zip(zip_path: &Path, out_dir: &Path) -> FozzyResult<()> {
         if f.is_dir() {
             continue;
         }
+        validate_zip_entry_name_raw(f.name_raw(), f.name())?;
         let mut bytes = Vec::new();
         f.read_to_end(&mut bytes)?;
         write_zip_entry_secure(out_dir, f.name(), &bytes)?;
@@ -312,6 +314,15 @@ fn normalize_zip_entry_rel_path(name: &str) -> FozzyResult<PathBuf> {
         )));
     }
     Ok(rel)
+}
+
+fn validate_zip_entry_name_raw(raw_name: &[u8], display_name: &str) -> FozzyResult<()> {
+    if raw_name.contains(&0) {
+        return Err(FozzyError::InvalidArgument(format!(
+            "unsafe archive entry path rejected: {display_name}"
+        )));
+    }
+    Ok(())
 }
 
 fn is_windows_drive_prefixed(name: &str) -> bool {
@@ -555,5 +566,28 @@ mod tests {
         let err = import_zip(&zip_path, &out).expect_err("must reject overwrite");
         assert!(err.to_string().contains("refusing to overwrite existing output file"));
         assert_eq!(std::fs::read(out.join("dup.bin")).expect("read"), b"old");
+    }
+
+    #[test]
+    fn import_rejects_nul_in_raw_entry_name() {
+        let root = std::env::temp_dir().join(format!("fozzy-corpus-nul-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("root");
+        let zip_path = root.join("in.zip");
+
+        {
+            let file = File::create(&zip_path).expect("zip create");
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("bad\0name.bin", opts).expect("start");
+            zip.write_all(b"payload").expect("write");
+            zip.finish().expect("finish");
+        }
+
+        let out = root.join("out");
+        std::fs::create_dir_all(&out).expect("out");
+
+        let err = import_zip(&zip_path, &out).expect_err("must reject nul entry names");
+        assert!(err.to_string().contains("unsafe archive entry path rejected"));
+        assert!(!out.join("bad").exists(), "must not write truncated output");
     }
 }
