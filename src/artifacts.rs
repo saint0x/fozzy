@@ -163,26 +163,35 @@ fn artifacts_list(config: &Config, run: &str) -> FozzyResult<Vec<ArtifactEntry>>
 }
 
 fn export_artifacts(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
-    let artifacts_dir = resolve_artifacts_dir(config, run)?;
+    let entries = artifacts_list(config, run)?;
+    let mut files: Vec<PathBuf> = entries
+        .into_iter()
+        .map(|e| PathBuf::from(e.path))
+        .filter(|p| p.exists() && p.is_file())
+        .collect();
+    files.sort();
+    files.dedup();
+
+    if files.is_empty() {
+        return Ok(());
+    }
+
     if out
         .extension()
         .and_then(|s| s.to_str())
         .is_some_and(|s| s.eq_ignore_ascii_case("zip"))
     {
-        export_artifacts_zip(&artifacts_dir, out)?;
+        export_artifacts_zip(&files, out)?;
         return Ok(());
     }
 
     std::fs::create_dir_all(out)?;
 
-    for entry in std::fs::read_dir(&artifacts_dir)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        if !ty.is_file() {
-            continue;
-        }
-        let src = entry.path();
-        let dst = out.join(entry.file_name());
+    for src in files {
+        let name = src
+            .file_name()
+            .ok_or_else(|| crate::FozzyError::InvalidArgument(format!("invalid artifact path: {}", src.display())))?;
+        let dst = out.join(name);
         std::fs::copy(src, dst)?;
     }
 
@@ -378,7 +387,7 @@ fn push_if_exists(out: &mut Vec<ArtifactEntry>, kind: ArtifactKind, path: PathBu
     Ok(())
 }
 
-fn export_artifacts_zip(artifacts_dir: &Path, out_zip: &Path) -> FozzyResult<()> {
+fn export_artifacts_zip(files: &[PathBuf], out_zip: &Path) -> FozzyResult<()> {
     use std::fs::File;
     use std::io::Write as _;
 
@@ -392,14 +401,14 @@ fn export_artifacts_zip(artifacts_dir: &Path, out_zip: &Path) -> FozzyResult<()>
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o644);
 
-    for entry in std::fs::read_dir(artifacts_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
+    for src in files {
+        let name = src
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| crate::FozzyError::InvalidArgument(format!("invalid artifact path: {}", src.display())))?
+            .to_string();
         zip.start_file(name, options)?;
-        let bytes = std::fs::read(entry.path())?;
+        let bytes = std::fs::read(src)?;
         zip.write_all(&bytes)?;
     }
 
