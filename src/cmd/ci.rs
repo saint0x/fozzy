@@ -2,15 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::{
-    artifacts_command, report_command, replay_trace, verify_trace_file, ArtifactCommand, Config, FozzyError,
-    FozzyResult, ReportCommand, ReplayOptions, Reporter, TraceFile, TracePath,
+    artifacts_command, report_command, replay_trace, verify_trace_file, ArtifactCommand, Config, FlakeBudget,
+    FozzyError, FozzyResult, ReportCommand, ReplayOptions, Reporter, TraceFile, TracePath,
 };
 
 #[derive(Debug, Clone)]
 pub struct CiOptions {
     pub trace: PathBuf,
     pub flake_runs: Vec<String>,
-    pub flake_budget_pct: Option<f64>,
+    pub flake_budget_pct: Option<FlakeBudget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

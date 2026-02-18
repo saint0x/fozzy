@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -10,6 +11,36 @@ pub enum Reporter {
     Json,
     Junit,
     Html,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct FlakeBudget(f64);
+
+impl FlakeBudget {
+    pub fn pct(self) -> f64 {
+        self.0
+    }
+}
+
+impl FromStr for FlakeBudget {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let v: f64 = s
+            .parse()
+            .map_err(|_| format!("invalid flake budget {s:?}: expected number in range 0..=100"))?;
+        if !v.is_finite() {
+            return Err(format!(
+                "invalid flake budget {s:?}: must be finite and in range 0..=100"
+            ));
+        }
+        if !(0.0..=100.0).contains(&v) {
+            return Err(format!(
+                "invalid flake budget {s:?}: must be finite and in range 0..=100"
+            ));
+        }
+        Ok(Self(v))
+    }
 }
 
 impl clap::ValueEnum for Reporter {

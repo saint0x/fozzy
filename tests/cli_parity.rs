@@ -155,3 +155,51 @@ fn strict_mode_fails_on_stale_trace_verify_warnings() {
     ]);
     assert_eq!(strict.status.code(), Some(2), "strict should fail");
 }
+
+#[test]
+fn non_finite_flake_budget_is_rejected() {
+    let ws = temp_workspace("flake-budget");
+    std::fs::write(ws.join("fozzy.toml"), "base_dir = \".fozzy\"\n").expect("write config");
+    let cfg = ws.join("fozzy.toml").to_string_lossy().to_string();
+    let cwd = ws.to_string_lossy().to_string();
+
+    let report_nan = run_cli(&[
+        "report".into(),
+        "flaky".into(),
+        "r1".into(),
+        "r2".into(),
+        "--flake-budget".into(),
+        "NaN".into(),
+        "--cwd".into(),
+        cwd.clone(),
+        "--config".into(),
+        cfg.clone(),
+    ]);
+    assert_eq!(report_nan.status.code(), Some(2), "NaN should be rejected");
+
+    let report_inf = run_cli(&[
+        "report".into(),
+        "flaky".into(),
+        "r1".into(),
+        "r2".into(),
+        "--flake-budget".into(),
+        "inf".into(),
+        "--cwd".into(),
+        cwd.clone(),
+        "--config".into(),
+        cfg.clone(),
+    ]);
+    assert_eq!(report_inf.status.code(), Some(2), "inf should be rejected");
+
+    let ci_nan = run_cli(&[
+        "ci".into(),
+        "trace.fozzy".into(),
+        "--flake-budget".into(),
+        "NaN".into(),
+        "--cwd".into(),
+        cwd,
+        "--config".into(),
+        cfg,
+    ]);
+    assert_eq!(ci_nan.status.code(), Some(2), "ci NaN should be rejected");
+}

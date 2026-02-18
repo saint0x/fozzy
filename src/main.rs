@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use fozzy::{
-    ArtifactCommand, CiOptions, Config, CorpusCommand, ExitStatus, FozzyDuration, InitTemplate, ReportCommand,
+    ArtifactCommand, CiOptions, Config, CorpusCommand, ExitStatus, FlakeBudget, FozzyDuration, InitTemplate,
+    ReportCommand,
     ExploreOptions, FuzzMode, FuzzOptions, FuzzTarget, RecordCollisionPolicy, Reporter, RunOptions, RunSummary,
     ScenarioPath, ScheduleStrategy, ShrinkMinimize, TracePath,
 };
@@ -300,7 +301,7 @@ enum Command {
         flake_runs: Vec<String>,
         /// Maximum allowed flake rate percentage.
         #[arg(long = "flake-budget")]
-        flake_budget: Option<f64>,
+        flake_budget: Option<FlakeBudget>,
     },
 
     /// Print version and build info

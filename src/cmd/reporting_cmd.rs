@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use std::path::PathBuf;
 
-use crate::{render_html, render_junit_xml, Config, FozzyError, FozzyResult, Reporter, RunSummary, TraceFile};
+use crate::{render_html, render_junit_xml, Config, FlakeBudget, FozzyError, FozzyResult, Reporter, RunSummary, TraceFile};
 
 #[derive(Debug, Subcommand)]
 pub enum ReportCommand {
@@ -24,7 +24,7 @@ pub enum ReportCommand {
     Flaky {
         runs: Vec<String>,
         #[arg(long)]
-        flake_budget: Option<f64>,
+        flake_budget: Option<FlakeBudget>,
     },
 }
 
@@ -88,7 +88,7 @@ pub fn report_command(config: &Config, command: &ReportCommand) -> FozzyResult<s
     }
 }
 
-fn flaky_command(config: &Config, runs: &[String], flake_budget: Option<f64>) -> FozzyResult<serde_json::Value> {
+fn flaky_command(config: &Config, runs: &[String], flake_budget: Option<FlakeBudget>) -> FozzyResult<serde_json::Value> {
     if runs.len() < 2 {
         return Err(FozzyError::Report(
             "flaky analysis requires at least two runs/traces".to_string(),
@@ -129,10 +129,11 @@ fn flaky_command(config: &Config, runs: &[String], flake_budget: Option<f64>) ->
         ((total - dominant) / total) * 100.0
     };
     if let Some(budget) = flake_budget {
-        if flake_rate_pct > budget {
+        if flake_rate_pct > budget.pct() {
             return Err(FozzyError::Report(format!(
                 "flake budget exceeded: {:.2}% > {:.2}%",
-                flake_rate_pct, budget
+                flake_rate_pct,
+                budget.pct()
             )));
         }
     }
@@ -527,11 +528,21 @@ mod tests {
             reporter: Reporter::Json,
         };
 
-        let out = flaky_command(&cfg, &[a.clone(), b.clone()], Some(60.0)).expect("within budget");
+        let out = flaky_command(
+            &cfg,
+            &[a.clone(), b.clone()],
+            Some("60".parse::<crate::FlakeBudget>().expect("budget parse")),
+        )
+        .expect("within budget");
         let obj = out.as_object().expect("obj");
         assert!(obj.get("flakeRatePct").is_some());
 
-        let err = flaky_command(&cfg, &[a, b], Some(10.0)).expect_err("over budget");
+        let err = flaky_command(
+            &cfg,
+            &[a, b],
+            Some("10".parse::<crate::FlakeBudget>().expect("budget parse")),
+        )
+        .expect_err("over budget");
         assert!(err.to_string().contains("flake budget exceeded"));
     }
 }
