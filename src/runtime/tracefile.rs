@@ -10,6 +10,7 @@ use crate::{
 };
 
 pub const CURRENT_TRACE_VERSION: u32 = 2;
+pub const TRACE_FORMAT: &str = "fozzy-trace";
 
 #[derive(Debug, Clone)]
 pub struct TracePath {
@@ -63,7 +64,7 @@ impl TraceFile {
         summary: RunSummary,
     ) -> Self {
         Self {
-            format: "fozzy-trace".to_string(),
+            format: TRACE_FORMAT.to_string(),
             version: CURRENT_TRACE_VERSION,
             engine: crate::version_info(),
             mode,
@@ -80,7 +81,7 @@ impl TraceFile {
 
     pub fn new_fuzz(target: String, input: &[u8], events: Vec<TraceEvent>, summary: RunSummary) -> Self {
         Self {
-            format: "fozzy-trace".to_string(),
+            format: TRACE_FORMAT.to_string(),
             version: CURRENT_TRACE_VERSION,
             engine: crate::version_info(),
             mode: RunMode::Fuzz,
@@ -105,7 +106,7 @@ impl TraceFile {
         summary: RunSummary,
     ) -> Self {
         Self {
-            format: "fozzy-trace".to_string(),
+            format: TRACE_FORMAT.to_string(),
             version: CURRENT_TRACE_VERSION,
             engine: crate::version_info(),
             mode: RunMode::Explore,
@@ -162,6 +163,7 @@ impl TraceFile {
                 path.display()
             ))
         })?;
+        validate_trace_header(&t, path)?;
         verify_checksum(&t, path)?;
         Ok(t)
     }
@@ -288,6 +290,26 @@ fn verify_checksum(trace: &TraceFile, path: &Path) -> FozzyResult<()> {
             path.display(),
             expected,
             got
+        )));
+    }
+    Ok(())
+}
+
+fn validate_trace_header(trace: &TraceFile, path: &Path) -> FozzyResult<()> {
+    if trace.format != TRACE_FORMAT {
+        return Err(FozzyError::Trace(format!(
+            "unsupported trace format for {}: got {}, expected {}",
+            path.display(),
+            trace.format,
+            TRACE_FORMAT
+        )));
+    }
+    if !(1..=CURRENT_TRACE_VERSION).contains(&trace.version) {
+        return Err(FozzyError::Trace(format!(
+            "unsupported trace schema version for {}: v{} (supported: 1..={})",
+            path.display(),
+            trace.version,
+            CURRENT_TRACE_VERSION
         )));
     }
     Ok(())
@@ -479,5 +501,57 @@ mod tests {
         std::fs::write(&path, [0_u8, 159, 146, 150, 255, 0, 1, 2]).expect("write");
         let err = TraceFile::read_json(&path).expect_err("must fail");
         assert!(err.to_string().contains("failed to parse trace"));
+    }
+
+    #[test]
+    fn unsupported_trace_format_is_rejected() {
+        let path = temp_file("bad-format.fozzy");
+        let raw = r#"{
+          "format":"fozzy-trace-vX",
+          "version":2,
+          "engine":{"version":"0.1.0"},
+          "mode":"run",
+          "scenario_path":null,
+          "scenario":{"version":1,"name":"x","steps":[]},
+          "decisions":[],
+          "events":[],
+          "summary":{
+            "status":"pass",
+            "mode":"run",
+            "identity":{"runId":"r1","seed":1},
+            "startedAt":"2026-01-01T00:00:00Z",
+            "finishedAt":"2026-01-01T00:00:00Z",
+            "durationMs":0
+          }
+        }"#;
+        std::fs::write(&path, raw).expect("write");
+        let err = TraceFile::read_json(&path).expect_err("must reject unsupported format");
+        assert!(err.to_string().contains("unsupported trace format"));
+    }
+
+    #[test]
+    fn unsupported_trace_version_is_rejected() {
+        let path = temp_file("bad-version.fozzy");
+        let raw = r#"{
+          "format":"fozzy-trace",
+          "version":999,
+          "engine":{"version":"0.1.0"},
+          "mode":"run",
+          "scenario_path":null,
+          "scenario":{"version":1,"name":"x","steps":[]},
+          "decisions":[],
+          "events":[],
+          "summary":{
+            "status":"pass",
+            "mode":"run",
+            "identity":{"runId":"r1","seed":1},
+            "startedAt":"2026-01-01T00:00:00Z",
+            "finishedAt":"2026-01-01T00:00:00Z",
+            "durationMs":0
+          }
+        }"#;
+        std::fs::write(&path, raw).expect("write");
+        let err = TraceFile::read_json(&path).expect_err("must reject unsupported version");
+        assert!(err.to_string().contains("unsupported trace schema version"));
     }
 }

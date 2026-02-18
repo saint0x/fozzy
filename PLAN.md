@@ -140,6 +140,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ⬜ Concurrent stress and retention/repro gates in CI still pending
 - ✅ `--strict` warning-to-error mode added for run/replay/shrink warning findings, `trace verify`, and `doctor`
 - ✅ `trace verify --json --strict` now emits a single final JSON document (error-only on strict failure), preserving machine-parse contract
+- ✅ Trace ingest now enforces explicit header compatibility (`format=fozzy-trace`, schema `version` in supported range) for verify/replay/ci, independent of checksum presence
 - ✅ Local parity/golden hardening tests added: run-like common flag parsing and end-to-end `record -> replay -> shrink -> replay(min)` for run/fuzz/explore
 - ✅ End-to-end golden flows (`record -> replay -> shrink -> replay(min)`) per mode
 

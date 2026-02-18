@@ -290,6 +290,76 @@ fn strict_trace_verify_json_emits_single_error_document() {
 }
 
 #[test]
+fn invalid_trace_header_is_rejected_in_non_strict_verify_replay_and_ci() {
+    let ws = temp_workspace("trace-header");
+    let bad_format = ws.join("bad-format.fozzy");
+    let bad_version = ws.join("bad-version.fozzy");
+
+    let base = |format: &str, version: u32| -> String {
+        format!(
+            r#"{{
+      "format":"{format}",
+      "version":{version},
+      "engine":{{"version":"0.1.0"}},
+      "mode":"run",
+      "scenario_path":null,
+      "scenario":{{"version":1,"name":"x","steps":[]}},
+      "decisions":[],
+      "events":[],
+      "summary":{{
+        "status":"pass",
+        "mode":"run",
+        "identity":{{"runId":"r1","seed":1}},
+        "startedAt":"2026-01-01T00:00:00Z",
+        "finishedAt":"2026-01-01T00:00:00Z",
+        "durationMs":0
+      }}
+    }}"#
+        )
+    };
+
+    std::fs::write(&bad_format, base("fozzy-trace-vX", 2)).expect("write bad format");
+    std::fs::write(&bad_version, base("fozzy-trace", 999)).expect("write bad version");
+
+    let bad_format_arg = bad_format.to_string_lossy().to_string();
+    let bad_version_arg = bad_version.to_string_lossy().to_string();
+
+    let verify_bad_format = run_cli(&[
+        "trace".into(),
+        "verify".into(),
+        bad_format_arg.clone(),
+        "--json".into(),
+    ]);
+    assert_eq!(
+        verify_bad_format.status.code(),
+        Some(2),
+        "trace verify must reject bad format in non-strict mode"
+    );
+
+    let replay_bad_version = run_cli(&[
+        "replay".into(),
+        bad_version_arg.clone(),
+        "--json".into(),
+    ]);
+    assert_eq!(
+        replay_bad_version.status.code(),
+        Some(2),
+        "replay must reject bad version in non-strict mode"
+    );
+
+    let ci_bad_version = run_cli(&[
+        "ci".into(),
+        bad_version_arg,
+        "--json".into(),
+    ]);
+    assert_eq!(
+        ci_bad_version.status.code(),
+        Some(2),
+        "ci must reject bad version in non-strict mode"
+    );
+}
+
+#[test]
 fn ci_rejects_flake_budget_without_flake_runs() {
     let ws = temp_workspace("ci-budget");
     let trace = ws.join("trace.fozzy");
