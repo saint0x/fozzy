@@ -34,6 +34,8 @@ EXPLORE (distributed):
             [--nodes <n>] [--faults <preset|file>] [--schedule <strategy>]
             [--checker <name>] [--record <path>] [--shrink on|off]
             [--reporter <...>] [--minimize]
+  presets: --faults none|partition-first-two|heal-first-two|crash-first|restart-first
+  checkers: --checker kv_all_equal:<key>|kv_present_on_all:<key>|kv_node_equals:<node>:<key>:<value>
 
 REPLAY:
   fozzy replay <trace.fozzy> [--step] [--until <t>] [--json] [--dump-events]

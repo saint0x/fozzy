@@ -118,7 +118,9 @@ pub fn explore(config: &Config, scenario_path: ScenarioPath, opt: &ExploreOption
     let artifacts_dir = config.runs_dir().join(&run_id);
     std::fs::create_dir_all(&artifacts_dir)?;
 
-    let scenario = load_explore_scenario(&scenario_path, opt.nodes)?;
+    let mut scenario = load_explore_scenario(&scenario_path, opt.nodes)?;
+    apply_faults_preset(&mut scenario, opt.faults.as_deref())?;
+    apply_checker_override(&mut scenario, opt.checker.as_deref())?;
     let (status, findings, events, delivered, decisions) =
         run_explore_inner(&scenario, seed, opt.schedule, opt.steps, opt.time)?;
     let _ = delivered;
@@ -728,9 +730,157 @@ fn check_invariants(scenario: &ScenarioV1Explore, nodes: &BTreeMap<String, Node>
                     }
                 }
             }
+            DistributedInvariant::KvPresentOnAll { key } => {
+                for (name, n) in nodes {
+                    if !n.running {
+                        continue;
+                    }
+                    if !n.kv.contains_key(key) {
+                        return Some(Finding {
+                            kind: FindingKind::Invariant,
+                            title: "kv_present_on_all".to_string(),
+                            message: format!("invariant violated: key {key:?} missing on node {name:?}"),
+                            location: None,
+                        });
+                    }
+                }
+            }
+            DistributedInvariant::KvNodeEquals { node, key, equals } => {
+                let Some(n) = nodes.get(node) else {
+                    return Some(Finding {
+                        kind: FindingKind::Invariant,
+                        title: "kv_node_equals".to_string(),
+                        message: format!("invariant references unknown node {node:?}"),
+                        location: None,
+                    });
+                };
+                if !n.running {
+                    continue;
+                }
+                if n.kv.get(key).map(String::as_str) != Some(equals.as_str()) {
+                    return Some(Finding {
+                        kind: FindingKind::Invariant,
+                        title: "kv_node_equals".to_string(),
+                        message: format!(
+                            "invariant violated: expected {node}.{key} == {equals:?}, got {:?}",
+                            n.kv.get(key)
+                        ),
+                        location: None,
+                    });
+                }
+            }
         }
     }
     None
+}
+
+fn apply_faults_preset(scenario: &mut ScenarioV1Explore, faults: Option<&str>) -> FozzyResult<()> {
+    let Some(faults) = faults else {
+        return Ok(());
+    };
+    let mut injected = Vec::new();
+    for token in faults.split(',').map(str::trim).filter(|x| !x.is_empty()) {
+        match token {
+            "none" => {}
+            "partition-first-two" => {
+                if scenario.nodes.len() < 2 {
+                    return Err(FozzyError::Scenario(
+                        "fault preset partition-first-two requires at least 2 nodes".to_string(),
+                    ));
+                }
+                injected.push(DistributedStep::Partition {
+                    a: scenario.nodes[0].clone(),
+                    b: scenario.nodes[1].clone(),
+                });
+            }
+            "heal-first-two" => {
+                if scenario.nodes.len() < 2 {
+                    return Err(FozzyError::Scenario(
+                        "fault preset heal-first-two requires at least 2 nodes".to_string(),
+                    ));
+                }
+                injected.push(DistributedStep::Heal {
+                    a: scenario.nodes[0].clone(),
+                    b: scenario.nodes[1].clone(),
+                });
+            }
+            "crash-first" => {
+                if scenario.nodes.is_empty() {
+                    return Err(FozzyError::Scenario(
+                        "fault preset crash-first requires at least 1 node".to_string(),
+                    ));
+                }
+                injected.push(DistributedStep::Crash {
+                    node: scenario.nodes[0].clone(),
+                });
+            }
+            "restart-first" => {
+                if scenario.nodes.is_empty() {
+                    return Err(FozzyError::Scenario(
+                        "fault preset restart-first requires at least 1 node".to_string(),
+                    ));
+                }
+                injected.push(DistributedStep::Restart {
+                    node: scenario.nodes[0].clone(),
+                });
+            }
+            other => {
+                return Err(FozzyError::InvalidArgument(format!(
+                    "unknown --faults preset {other:?} (supported: none,partition-first-two,heal-first-two,crash-first,restart-first)"
+                )));
+            }
+        }
+    }
+    if !injected.is_empty() {
+        let mut merged = injected;
+        merged.extend(std::mem::take(&mut scenario.steps));
+        scenario.steps = merged;
+    }
+    Ok(())
+}
+
+fn apply_checker_override(scenario: &mut ScenarioV1Explore, checker: Option<&str>) -> FozzyResult<()> {
+    let Some(checker) = checker else {
+        return Ok(());
+    };
+    // Supported forms:
+    // - kv_all_equal:<key>
+    // - kv_present_on_all:<key>
+    // - kv_node_equals:<node>:<key>:<value>
+    let checker = checker.trim();
+    if let Some(key) = checker.strip_prefix("kv_all_equal:") {
+        scenario
+            .invariants
+            .push(DistributedInvariant::KvAllEqual { key: key.to_string() });
+        return Ok(());
+    }
+    if let Some(key) = checker.strip_prefix("kv_present_on_all:") {
+        scenario
+            .invariants
+            .push(DistributedInvariant::KvPresentOnAll { key: key.to_string() });
+        return Ok(());
+    }
+    if let Some(rest) = checker.strip_prefix("kv_node_equals:") {
+        let mut parts = rest.splitn(3, ':');
+        let node = parts.next().unwrap_or_default().trim();
+        let key = parts.next().unwrap_or_default().trim();
+        let equals = parts.next().unwrap_or_default().trim();
+        if node.is_empty() || key.is_empty() || equals.is_empty() {
+            return Err(FozzyError::InvalidArgument(
+                "invalid --checker kv_node_equals syntax; expected kv_node_equals:<node>:<key>:<value>".to_string(),
+            ));
+        }
+        scenario.invariants.push(DistributedInvariant::KvNodeEquals {
+            node: node.to_string(),
+            key: key.to_string(),
+            equals: equals.to_string(),
+        });
+        return Ok(());
+    }
+
+    Err(FozzyError::InvalidArgument(format!(
+        "unknown --checker {checker:?} (supported: kv_all_equal:<key>, kv_present_on_all:<key>, kv_node_equals:<node>:<key>:<value>)"
+    )))
 }
 
 fn deliverable_indices(queue: &VecDeque<Message>, nodes: &BTreeMap<String, Node>, net: &NetRules) -> Vec<usize> {

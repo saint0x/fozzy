@@ -77,6 +77,8 @@ pub enum DistributedStep {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DistributedInvariant {
     KvAllEqual { key: String },
+    KvPresentOnAll { key: String },
+    KvNodeEquals { node: String, key: String, equals: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
