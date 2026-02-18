@@ -4,6 +4,7 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::{Config, FozzyResult, RunSummary, TraceFile};
@@ -400,13 +401,10 @@ fn export_artifacts_zip(files: &[PathBuf], out_zip: &Path) -> FozzyResult<()> {
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o644);
+    let mut used_names: BTreeSet<String> = BTreeSet::new();
 
     for src in files {
-        let name = src
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| crate::FozzyError::InvalidArgument(format!("invalid artifact path: {}", src.display())))?
-            .to_string();
+        let name = zip_entry_name_for_path(src, &mut used_names);
         zip.start_file(name, options)?;
         let bytes = std::fs::read(src)?;
         zip.write_all(&bytes)?;
@@ -414,4 +412,78 @@ fn export_artifacts_zip(files: &[PathBuf], out_zip: &Path) -> FozzyResult<()> {
 
     zip.finish()?;
     Ok(())
+}
+
+fn zip_entry_name_for_path(path: &Path, used: &mut BTreeSet<String>) -> String {
+    let base = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "artifact".to_string());
+
+    let mut safe: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    while safe.contains("__") {
+        safe = safe.replace("__", "_");
+    }
+    safe = safe.trim_matches('_').to_string();
+    if safe.is_empty() {
+        safe = "artifact".to_string();
+    }
+
+    let (stem, ext) = match safe.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() && !e.is_empty() => (s.to_string(), Some(e.to_string())),
+        _ => (safe.clone(), None),
+    };
+
+    if used.insert(safe.clone()) {
+        return safe;
+    }
+
+    for i in 2..=10_000usize {
+        let candidate = match &ext {
+            Some(ext) => format!("{stem}.{i}.{ext}"),
+            None => format!("{stem}.{i}"),
+        };
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    "artifact.overflow".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_zip_normalizes_unicode_filenames_to_ascii() {
+        let root = std::env::temp_dir().join(format!("fozzy-artifacts-unicode-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let src_a = root.join("résumé-😀.json");
+        let src_b = root.join("résumé 👀.json");
+        std::fs::write(&src_a, b"{}").expect("write source a");
+        std::fs::write(&src_b, b"{}").expect("write source b");
+        let out = root.join("out.zip");
+
+        export_artifacts_zip(&[src_a, src_b], &out).expect("zip export");
+
+        let file = std::fs::File::open(&out).expect("open zip");
+        let mut archive = zip::ZipArchive::new(file).expect("parse zip");
+        let a = archive.by_index(0).expect("entry 0").name().to_string();
+        let b = archive.by_index(1).expect("entry 1").name().to_string();
+
+        assert!(a.is_ascii());
+        assert!(b.is_ascii());
+        assert_ne!(a, b);
+        assert!(a.ends_with(".json"));
+        assert!(b.ends_with(".json"));
+    }
 }
