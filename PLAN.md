@@ -104,8 +104,8 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 
 ### M10 Hardening
 - ✅ Determinism audit command added (`fozzy doctor --deep --scenario ... --runs ... --seed ...`)
-- ⬜ Performance optimization passes pending
-- ⬜ Memory/trace-size optimization pending
+- ✅ Performance pass: scheduler decision labels compacted to step-kind identifiers
+- ✅ Trace-size pass: traces write compact JSON by default (`FOZZY_TRACE_PRETTY=1` for pretty)
 - ✅ Trace format compatibility tests added (legacy/new decision schema parsing)
 - ✅ UX polish and diagnostics are partial (shrink default path now deterministic and explicit)
 
@@ -116,7 +116,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 4. ✅ Complete M7 combined shrinking pass for explore schedule/fault dimensions.
 5. ⬜ Ship M8 TS SDK package with stable API and examples.
 6. ✅ Finish M9 CI ergonomics and flaky analysis.
-7. ⬜ Execute M10 hardening/perf and deterministic audit gates.
+7. ✅ Execute M10 hardening/perf and deterministic audit gates.
 
 ## Definition of Done for 1.0
 - Replay does not drift across supported platforms.

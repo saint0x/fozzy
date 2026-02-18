@@ -114,7 +114,14 @@ impl TraceFile {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let bytes = serde_json::to_vec_pretty(self)?;
+        let pretty = std::env::var("FOZZY_TRACE_PRETTY")
+            .ok()
+            .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+        let bytes = if pretty {
+            serde_json::to_vec_pretty(self)?
+        } else {
+            serde_json::to_vec(self)?
+        };
         std::fs::write(path, bytes)?;
         Ok(())
     }

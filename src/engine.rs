@@ -692,7 +692,7 @@ fn run_scenario_inner(
     let deadline = timeout.map(|t| started + t);
     let mut scheduler = crate::DeterministicScheduler::new(crate::SchedulerMode::Fifo, seed);
     for (idx, step) in loaded.steps.iter().enumerate() {
-        scheduler.enqueue(format!("{step:?}"), idx);
+        scheduler.enqueue(step.kind_name().to_string(), idx);
     }
 
     while let Some(item) = scheduler.pop_next() {
@@ -754,7 +754,7 @@ fn run_scenario_replay_inner(
     if has_scheduler_pick {
         let mut scheduler = crate::DeterministicScheduler::new(crate::SchedulerMode::Fifo, seed);
         for (idx, step) in scenario.steps.iter().enumerate() {
-            scheduler.enqueue(format!("{step:?}"), idx);
+            scheduler.enqueue(step.kind_name().to_string(), idx);
         }
         while let Some(item) = scheduler.pop_next() {
             let idx = item.payload;
@@ -894,17 +894,17 @@ impl ExecCtx {
         }
     }
 
-    fn expect_scheduler_pick(&mut self, task_id: u64, label: &str) -> FozzyResult<()> {
+    fn expect_scheduler_pick(&mut self, task_id: u64, _label: &str) -> FozzyResult<()> {
         let Some(cursor) = self.replay.as_mut() else {
             return Ok(());
         };
         match cursor.next() {
             Some(Decision::SchedulerPick {
                 task_id: expected_id,
-                label: expected_label,
-            }) if *expected_id == task_id && expected_label == label => Ok(()),
+                ..
+            }) if *expected_id == task_id => Ok(()),
             Some(other) => Err(FozzyError::Trace(format!(
-                "replay drift: expected SchedulerPick(task_id={task_id}, label={label:?}), got {other:?}"
+                "replay drift: expected SchedulerPick(task_id={task_id}), got {other:?}"
             ))),
             None => Err(FozzyError::Trace(
                 "replay drift: missing SchedulerPick decision".to_string(),

@@ -208,6 +208,47 @@ pub enum Step {
     Panic { message: String },
 }
 
+impl Step {
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Step::TraceEvent { .. } => "trace_event",
+            Step::RandU64 { .. } => "rand_u64",
+            Step::AssertOk { .. } => "assert_ok",
+            Step::AssertEqInt { .. } => "assert_eq_int",
+            Step::AssertNeInt { .. } => "assert_ne_int",
+            Step::AssertEqStr { .. } => "assert_eq_str",
+            Step::AssertNeStr { .. } => "assert_ne_str",
+            Step::Sleep { .. } => "sleep",
+            Step::Advance { .. } => "advance",
+            Step::Freeze { .. } => "freeze",
+            Step::Unfreeze => "unfreeze",
+            Step::SetKv { .. } => "set_kv",
+            Step::GetKvAssert { .. } => "get_kv_assert",
+            Step::FsWrite { .. } => "fs_write",
+            Step::FsReadAssert { .. } => "fs_read_assert",
+            Step::FsSnapshot { .. } => "fs_snapshot",
+            Step::FsRestore { .. } => "fs_restore",
+            Step::HttpWhen { .. } => "http_when",
+            Step::HttpRequest { .. } => "http_request",
+            Step::ProcWhen { .. } => "proc_when",
+            Step::ProcSpawn { .. } => "proc_spawn",
+            Step::NetPartition { .. } => "net_partition",
+            Step::NetHeal { .. } => "net_heal",
+            Step::NetSetDropRate { .. } => "net_set_drop_rate",
+            Step::NetSetReorder { .. } => "net_set_reorder",
+            Step::NetSend { .. } => "net_send",
+            Step::NetDeliverOne { .. } => "net_deliver_one",
+            Step::NetRecvAssert { .. } => "net_recv_assert",
+            Step::AssertThrows { .. } => "assert_throws",
+            Step::AssertRejects { .. } => "assert_rejects",
+            Step::AssertEventuallyKv { .. } => "assert_eventually_kv",
+            Step::AssertNeverKv { .. } => "assert_never_kv",
+            Step::Fail { .. } => "fail",
+            Step::Panic { .. } => "panic",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Scenario {
     pub name: String,
