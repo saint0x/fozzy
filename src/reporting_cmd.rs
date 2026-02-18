@@ -19,12 +19,27 @@ pub enum ReportCommand {
         #[arg(long)]
         jq: String,
     },
+    Flaky {
+        runs: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportEnvelope {
     pub format: Reporter,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlakyReport {
+    #[serde(rename = "runCount")]
+    pub run_count: usize,
+    #[serde(rename = "statusCounts")]
+    pub status_counts: std::collections::BTreeMap<String, usize>,
+    #[serde(rename = "findingTitleSets")]
+    pub finding_title_sets: Vec<Vec<String>>,
+    #[serde(rename = "isFlaky")]
+    pub is_flaky: bool,
 }
 
 pub fn report_command(config: &Config, command: &ReportCommand) -> FozzyResult<serde_json::Value> {
@@ -47,7 +62,39 @@ pub fn report_command(config: &Config, command: &ReportCommand) -> FozzyResult<s
             let value = serde_json::to_value(summary)?;
             query_value(&value, jq)
         }
+        ReportCommand::Flaky { runs } => flaky_command(config, runs),
     }
+}
+
+fn flaky_command(config: &Config, runs: &[String]) -> FozzyResult<serde_json::Value> {
+    if runs.len() < 2 {
+        return Err(FozzyError::Report(
+            "flaky analysis requires at least two runs/traces".to_string(),
+        ));
+    }
+
+    let mut status_counts = std::collections::BTreeMap::<String, usize>::new();
+    let mut finding_sets = std::collections::BTreeSet::<Vec<String>>::new();
+
+    for run in runs {
+        let summary = load_summary(config, run)?;
+        let status_key = format!("{:?}", summary.status).to_lowercase();
+        *status_counts.entry(status_key).or_insert(0) += 1;
+
+        let mut titles: Vec<String> = summary.findings.iter().map(|f| f.title.clone()).collect();
+        titles.sort();
+        titles.dedup();
+        finding_sets.insert(titles);
+    }
+
+    let is_flaky = status_counts.len() > 1 || finding_sets.len() > 1;
+    let out = FlakyReport {
+        run_count: runs.len(),
+        status_counts,
+        finding_title_sets: finding_sets.into_iter().collect(),
+        is_flaky,
+    };
+    Ok(serde_json::to_value(out)?)
 }
 
 fn load_summary(config: &Config, run: &str) -> FozzyResult<RunSummary> {

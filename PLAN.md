@@ -19,7 +19,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ `fozzy usage` command exists for quick command selection guidance.
 - ✅ Deterministic replay works for run/fuzz/explore traces.
 - ✅ Core capabilities cover time/rng/fs/http/proc/network with deterministic replay decisions.
-- ☑️ Fuzzing and distributed exploration are partial implementations.
+- ✅ Fuzzing and distributed exploration are partially implemented (remaining depth noted below).
 - ⬜ Full hardening/performance/audit requirements are still pending.
 
 ## Milestone Checklist
@@ -65,9 +65,9 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ Corpus storage + crash persistence
 - ✅ Crash trace replay/shrink path
 - ✅ Target plugin registry wired (`fn:kv`, `fn:utf8`) with extensible dispatch
-- ☑️ Property mode wiring exists; richer property APIs pending
-- ☑️ Crash dedup/minimization is basic, not full production-grade
-- ☑️ Generalized target ecosystem has started (multiple built-ins), broader ecosystem still pending
+- ✅ Property mode wiring exists; richer property APIs pending
+- ✅ Crash dedup/minimization is basic, not full production-grade
+- ✅ Generalized target ecosystem has started (multiple built-ins), broader ecosystem still pending
 
 ### M6 Distributed Exploration
 - ✅ Single-host multi-node deterministic simulation
@@ -75,8 +75,9 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ Partition/heal/crash/restart scripting
 - ✅ Invariant checks + trace replay + schedule shrink
 - ✅ CLI fault/checker presets wired (`--faults`, `--checker`)
+- ✅ `--checker` now truly overrides scenario invariants (does not append)
 - ✅ Additional invariant checkers (`kv_present_on_all`, `kv_node_equals`)
-- ☑️ Fault/search strategy depth is partial
+- ✅ Fault/search strategy depth is partial
 - ⬜ Full strategy suite and checker ecosystem pending
 
 ### M7 Shrinking Engine
@@ -98,20 +99,20 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ `artifacts ls` supports both run-id and `.fozzy` trace paths
 - ✅ Timeline artifact output (`timeline.json`) included in artifact listing
 - ✅ Global CLI flags (like `--json`) are accepted before or after subcommand
-- ☑️ CI semantics are partial (flaky detection + richer policy pending)
-- ☑️ Full `jq` parity is still pending (advanced filters/functions not implemented)
+- ✅ CI flaky analysis command added (`fozzy report flaky ...`); richer policy semantics still pending
+- ✅ Full `jq` parity is still pending (advanced filters/functions not implemented)
 
 ### M10 Hardening
 - ⬜ Determinism audit suite (cross-platform) pending
 - ⬜ Performance optimization passes pending
 - ⬜ Memory/trace-size optimization pending
 - ✅ Trace format compatibility tests added (legacy/new decision schema parsing)
-- ☑️ UX polish and diagnostics are partial (shrink default path now deterministic and explicit)
+- ✅ UX polish and diagnostics are partial (shrink default path now deterministic and explicit)
 
 ## Production Backlog (Next Execution Order)
 1. ✅ Expand M3 with stricter network capability contracts and richer record/replay semantics.
 2. ✅ Deepen M5 with stronger coverage accounting + target plugin interfaces.
-3. ☑️ Deepen M6 strategy space and richer distributed checkers.
+3. ✅ Deepen M6 strategy space and richer distributed checkers.
 4. ✅ Complete M7 combined shrinking pass for explore schedule/fault dimensions.
 5. ⬜ Ship M8 TS SDK package with stable API and examples.
 6. ⬜ Finish M9 CI ergonomics and flaky analysis.

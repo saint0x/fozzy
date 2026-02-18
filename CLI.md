@@ -36,6 +36,7 @@ EXPLORE (distributed):
             [--reporter <...>] [--minimize]
   presets: --faults none|partition-first-two|heal-first-two|crash-first|restart-first
   checkers: --checker kv_all_equal:<key>|kv_present_on_all:<key>|kv_node_equals:<node>:<key>:<value>
+  note: `--checker` overrides scenario invariants; `kv_all_equal` is evaluated as a final-state convergence invariant.
 
 REPLAY:
   fozzy replay <trace.fozzy> [--step] [--until <t>] [--json] [--dump-events]
@@ -59,6 +60,7 @@ ARTIFACTS:
 REPORT:
   fozzy report show <run-id|trace> [--format json|pretty|junit|html]
   fozzy report query <run-id|trace> --jq <expr>   (supports .a.b, .arr[0], .arr[].field)
+  fozzy report flaky <run-id|trace> <run-id|trace> [more...]
 
 DOCTOR:
   fozzy doctor [--deep] [--json]

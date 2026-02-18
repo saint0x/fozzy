@@ -515,13 +515,13 @@ fn run_explore_inner(
 
         deliver_message(msg, &mut nodes, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
 
-        if let Some(finding) = check_invariants(scenario, &nodes) {
+        if let Some(finding) = check_invariants(scenario, &nodes, InvariantPhase::Progress) {
             findings.push(finding);
             return Ok((ExitStatus::Fail, findings, events, delivered, decisions));
         }
     }
 
-    if let Some(finding) = check_invariants(scenario, &nodes) {
+    if let Some(finding) = check_invariants(scenario, &nodes, InvariantPhase::Final) {
         findings.push(finding);
         return Ok((ExitStatus::Fail, findings, events, delivered, decisions));
     }
@@ -599,7 +599,7 @@ fn run_explore_replay_inner(
         });
         deliver_message(msg, &mut nodes, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
 
-        if let Some(finding) = check_invariants(scenario, &nodes) {
+        if let Some(finding) = check_invariants(scenario, &nodes, InvariantPhase::Progress) {
             findings.push(finding);
             return Ok((ExitStatus::Fail, findings, events, delivered, decisions.to_vec()));
         }
@@ -615,7 +615,7 @@ fn run_explore_replay_inner(
         deliver_message(msg, &mut nodes, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
     }
 
-    if let Some(finding) = check_invariants(scenario, &nodes) {
+    if let Some(finding) = check_invariants(scenario, &nodes, InvariantPhase::Final) {
         findings.push(finding);
         return Ok((ExitStatus::Fail, findings, events, delivered, decisions.to_vec()));
     }
@@ -782,10 +782,24 @@ fn deliver_message(
     Ok(())
 }
 
-fn check_invariants(scenario: &ScenarioV1Explore, nodes: &BTreeMap<String, Node>) -> Option<Finding> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InvariantPhase {
+    Progress,
+    Final,
+}
+
+fn check_invariants(
+    scenario: &ScenarioV1Explore,
+    nodes: &BTreeMap<String, Node>,
+    phase: InvariantPhase,
+) -> Option<Finding> {
     for inv in &scenario.invariants {
         match inv {
             DistributedInvariant::KvAllEqual { key } => {
+                if phase == InvariantPhase::Progress {
+                    // UX: treat kv_all_equal as convergence/final-state invariant, not per-step transient.
+                    continue;
+                }
                 let mut expected: Option<String> = None;
                 for n in nodes.values() {
                     if !n.running {
@@ -919,24 +933,37 @@ fn apply_checker_override(scenario: &mut ScenarioV1Explore, checker: Option<&str
     let Some(checker) = checker else {
         return Ok(());
     };
+    let mut parsed = Vec::new();
+    for token in checker.split(',').map(str::trim).filter(|x| !x.is_empty()) {
+        parsed.push(parse_checker_token(token)?);
+    }
+    if parsed.is_empty() {
+        return Err(FozzyError::InvalidArgument(
+            "empty --checker override; provide at least one checker token".to_string(),
+        ));
+    }
+
+    // Override semantics: replace scenario invariants instead of appending.
+    scenario.invariants = parsed;
+    Ok(())
+}
+
+fn parse_checker_token(token: &str) -> FozzyResult<DistributedInvariant> {
     // Supported forms:
     // - kv_all_equal:<key>
     // - kv_present_on_all:<key>
     // - kv_node_equals:<node>:<key>:<value>
-    let checker = checker.trim();
-    if let Some(key) = checker.strip_prefix("kv_all_equal:") {
-        scenario
-            .invariants
-            .push(DistributedInvariant::KvAllEqual { key: key.to_string() });
-        return Ok(());
+    if let Some(key) = token.strip_prefix("kv_all_equal:") {
+        return Ok(DistributedInvariant::KvAllEqual {
+            key: key.to_string(),
+        });
     }
-    if let Some(key) = checker.strip_prefix("kv_present_on_all:") {
-        scenario
-            .invariants
-            .push(DistributedInvariant::KvPresentOnAll { key: key.to_string() });
-        return Ok(());
+    if let Some(key) = token.strip_prefix("kv_present_on_all:") {
+        return Ok(DistributedInvariant::KvPresentOnAll {
+            key: key.to_string(),
+        });
     }
-    if let Some(rest) = checker.strip_prefix("kv_node_equals:") {
+    if let Some(rest) = token.strip_prefix("kv_node_equals:") {
         let mut parts = rest.splitn(3, ':');
         let node = parts.next().unwrap_or_default().trim();
         let key = parts.next().unwrap_or_default().trim();
@@ -946,16 +973,15 @@ fn apply_checker_override(scenario: &mut ScenarioV1Explore, checker: Option<&str
                 "invalid --checker kv_node_equals syntax; expected kv_node_equals:<node>:<key>:<value>".to_string(),
             ));
         }
-        scenario.invariants.push(DistributedInvariant::KvNodeEquals {
+        return Ok(DistributedInvariant::KvNodeEquals {
             node: node.to_string(),
             key: key.to_string(),
             equals: equals.to_string(),
         });
-        return Ok(());
     }
 
     Err(FozzyError::InvalidArgument(format!(
-        "unknown --checker {checker:?} (supported: kv_all_equal:<key>, kv_present_on_all:<key>, kv_node_equals:<node>:<key>:<value>)"
+        "unknown --checker {token:?} (supported: kv_all_equal:<key>, kv_present_on_all:<key>, kv_node_equals:<node>:<key>:<value>)"
     )))
 }
 
