@@ -1,0 +1,38 @@
+{
+  "name": "fozzy-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK wrapper for the fozzy Rust CLI",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "fozzy",
+    "testing",
+    "fuzzing",
+    "replay",
+    "deterministic"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.6.3"
+  }
+}

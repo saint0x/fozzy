@@ -89,8 +89,8 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 
 ### M8 TypeScript SDK
 - ✅ Contract/spec documented in `SDK-TS.md`
-- ⬜ Production NPM package and full command parity pending
-- ⬜ Streaming + scenario builder helpers pending
+- ✅ Production NPM package scaffolded in `sdk-ts/` with full CLI command parity wrapper
+- ✅ Streaming helper (`stream(...)`) and scenario builder helpers (`ScenarioBuilder`, `DistributedScenarioBuilder`)
 
 ### M9 CI + Reporting
 - ✅ JSON + JUnit + HTML report outputs
@@ -114,7 +114,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 2. ✅ Deepen M5 with stronger coverage accounting + target plugin interfaces.
 3. ✅ Deepen M6 strategy space and richer distributed checkers.
 4. ✅ Complete M7 combined shrinking pass for explore schedule/fault dimensions.
-5. ⬜ Ship M8 TS SDK package with stable API and examples.
+5. ✅ Ship M8 TS SDK package with stable API and examples.
 6. ✅ Finish M9 CI ergonomics and flaky analysis.
 7. ✅ Execute M10 hardening/perf and deterministic audit gates.
 

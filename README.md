@@ -37,8 +37,8 @@ The canonical CLI surface is documented in `/Users/deepsaint/Desktop/fozzy/CLI.m
 - `/Users/deepsaint/Desktop/fozzy/PLAN.md`: execution plan / milestones
 - `/Users/deepsaint/Desktop/fozzy/RUST-STYLE-GUIDE.md`: Rust conventions for this codebase
 - `/Users/deepsaint/Desktop/fozzy/SDK-TS.md`: TypeScript SDK contract (thin wrapper over the binary)
+- `/Users/deepsaint/Desktop/fozzy/sdk-ts/`: production TypeScript SDK package scaffold (`fozzy-sdk`)
 
 ## License
 
 MIT (see `LICENSE`).
-
