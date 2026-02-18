@@ -134,6 +134,8 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ `artifacts pack/export --out <dir>` and `corpus import --out <dir>` now preflight all targets so symlink-block failures are atomic (no partial outputs written)
 - ✅ `artifacts pack/export` now fail non-zero on incomplete run directories (required bundle files missing) instead of emitting partial bundles
 - ✅ `artifacts pack/export --out <dir>` now reject stale pre-existing unrelated files in output directories (prevents mixed old/new contamination)
+- ✅ `artifacts pack/export` now validate `manifest.json` schema+parse integrity and fail non-zero on corrupted manifest bytes
+- ✅ File-output mode (`--out <zip>`) now enforces symlink-safe output path traversal checks (including parent path components)
 - ✅ `corpus import` now rejects Windows-style unsafe archive paths (`..\\`, drive-prefixed, UNC-root) on all platforms
 - ✅ `corpus import` now rejects unsafe/special archive filenames (control chars, NUL-containing names, Windows-reserved names, trailing-dot/space, cross-platform invalid chars)
 - ✅ `corpus import` now rejects duplicate archive targets including alias/case-collision forms (for example `dup.bin`, `./dup.bin`, `DUP.BIN`) to prevent silent last-write-wins

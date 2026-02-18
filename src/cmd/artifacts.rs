@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::{Config, FozzyResult, RunSummary, TraceFile};
+use crate::{Config, FozzyResult, RunManifest, RunSummary, TraceFile};
 
 #[derive(Debug, Subcommand)]
 pub enum ArtifactCommand {
@@ -207,6 +207,7 @@ fn export_reproducer_pack(config: &Config, run: &str, out: &Path) -> FozzyResult
     }
     if strict_bundle {
         validate_required_bundle_files(&files, run)?;
+        validate_manifest_integrity(&files, run)?;
     }
 
     let meta_dir = std::env::temp_dir().join(format!("fozzy-pack-{}", uuid::Uuid::new_v4()));
@@ -265,6 +266,7 @@ fn export_artifacts(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
     }
     if strict_bundle {
         validate_required_bundle_files(&files, run)?;
+        validate_manifest_integrity(&files, run)?;
     }
 
     if out
@@ -479,6 +481,7 @@ fn export_artifacts_zip(files: &[PathBuf], out_zip: &Path) -> FozzyResult<()> {
     use std::fs::File;
     use std::io::Write as _;
 
+    validate_output_file_path_secure(out_zip)?;
     if let Some(parent) = out_zip.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -617,6 +620,7 @@ fn copy_file_into_dir_secure(src: &Path, out_dir: &Path) -> FozzyResult<()> {
 }
 
 fn validate_copy_targets_secure(files: &[PathBuf], out_dir: &Path) -> FozzyResult<()> {
+    validate_output_dir_path_secure(out_dir)?;
     if out_dir.exists() {
         let out_md = std::fs::symlink_metadata(out_dir)?;
         if out_md.file_type().is_symlink() {
@@ -692,6 +696,31 @@ fn validate_required_bundle_files(files: &[PathBuf], run: &str) -> FozzyResult<(
     Ok(())
 }
 
+fn validate_manifest_integrity(files: &[PathBuf], run: &str) -> FozzyResult<()> {
+    let manifest_path = files
+        .iter()
+        .find(|p| p.file_name().and_then(|s| s.to_str()) == Some("manifest.json"))
+        .ok_or_else(|| {
+            crate::FozzyError::InvalidArgument(format!(
+                "incomplete artifacts for {run:?}; missing required files: manifest.json"
+            ))
+        })?;
+    let bytes = std::fs::read(manifest_path)?;
+    let manifest: RunManifest = serde_json::from_slice(&bytes).map_err(|e| {
+        crate::FozzyError::InvalidArgument(format!(
+            "invalid manifest for {run:?}: {} ({e})",
+            manifest_path.display()
+        ))
+    })?;
+    if manifest.schema_version != "fozzy.run_manifest.v1" {
+        return Err(crate::FozzyError::InvalidArgument(format!(
+            "invalid manifest for {run:?}: unsupported schemaVersion {}",
+            manifest.schema_version
+        )));
+    }
+    Ok(())
+}
+
 fn is_direct_trace_input(run: &str) -> bool {
     let p = PathBuf::from(run);
     p.exists()
@@ -701,9 +730,62 @@ fn is_direct_trace_input(run: &str) -> bool {
             .is_some_and(|s| s.eq_ignore_ascii_case("fozzy"))
 }
 
+fn validate_output_file_path_secure(out_file: &Path) -> FozzyResult<()> {
+    if out_file.exists() {
+        let md = std::fs::symlink_metadata(out_file)?;
+        if md.file_type().is_symlink() {
+            return Err(crate::FozzyError::InvalidArgument(format!(
+                "refusing to overwrite symlinked output file: {}",
+                out_file.display()
+            )));
+        }
+    }
+    validate_output_dir_path_secure(out_file.parent().unwrap_or_else(|| Path::new(".")))
+}
+
+fn validate_output_dir_path_secure(path: &Path) -> FozzyResult<()> {
+    let is_abs = path.is_absolute();
+    let mut cur = if is_abs {
+        PathBuf::from(Path::new(std::path::MAIN_SEPARATOR_STR))
+    } else {
+        std::env::current_dir()?
+    };
+    let mut normal_seen = 0usize;
+    for comp in path.components() {
+        use std::path::Component;
+        match comp {
+            Component::Prefix(prefix) => cur.push(prefix.as_os_str()),
+            Component::RootDir => {}
+            Component::CurDir => continue,
+            Component::ParentDir => cur.push(".."),
+            Component::Normal(seg) => {
+                normal_seen += 1;
+                cur.push(seg);
+            }
+        }
+        if cur.exists() {
+            let md = std::fs::symlink_metadata(&cur)?;
+            let skip_abs_top_component = is_abs && normal_seen == 1;
+            if md.file_type().is_symlink() && !skip_abs_top_component {
+                return Err(crate::FozzyError::InvalidArgument(format!(
+                    "refusing to write through symlinked output path: {}",
+                    cur.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn valid_manifest_json(run_id: &str) -> String {
+        format!(
+            r#"{{"schemaVersion":"fozzy.run_manifest.v1","runId":"{run_id}","mode":"run","status":"pass","seed":1,"startedAt":"2026-01-01T00:00:00Z","finishedAt":"2026-01-01T00:00:00Z","durationMs":0,"findingsCount":0}}"#
+        )
+    }
 
     #[test]
     fn export_zip_normalizes_unicode_filenames_to_ascii() {
@@ -768,7 +850,7 @@ mod tests {
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), b"{}").expect("report");
         std::fs::write(run_dir.join("events.json"), b"[]").expect("events");
-        std::fs::write(run_dir.join("manifest.json"), br#"{"schemaVersion":"fozzy.run_manifest.v1"}"#).expect("manifest");
+        std::fs::write(run_dir.join("manifest.json"), valid_manifest_json("r1")).expect("manifest");
         std::fs::write(run_dir.join("trace.fozzy"), b"{}").expect("trace");
         let out = root.join("pack.zip");
         let cfg = crate::Config {
@@ -797,7 +879,7 @@ mod tests {
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
         std::fs::write(run_dir.join("events.json"), br#"[]"#).expect("events");
-        std::fs::write(run_dir.join("manifest.json"), br#"{"schemaVersion":"fozzy.run_manifest.v1"}"#).expect("manifest");
+        std::fs::write(run_dir.join("manifest.json"), valid_manifest_json("r1")).expect("manifest");
         std::fs::write(run_dir.join("trace.fozzy"), br#"{"format":"fozzy-trace"}"#).expect("trace");
         let cfg = crate::Config {
             base_dir: root.join(".fozzy"),
@@ -826,7 +908,7 @@ mod tests {
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"report":true}"#).expect("report");
         std::fs::write(run_dir.join("events.json"), br#"[]"#).expect("events");
-        std::fs::write(run_dir.join("manifest.json"), br#"{"schemaVersion":"fozzy.run_manifest.v1"}"#).expect("manifest");
+        std::fs::write(run_dir.join("manifest.json"), valid_manifest_json("r1")).expect("manifest");
         std::fs::write(run_dir.join("trace.fozzy"), br#"{"format":"fozzy-trace"}"#).expect("trace");
         let cfg = crate::Config {
             base_dir: root.join(".fozzy"),
@@ -853,7 +935,7 @@ mod tests {
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
         std::fs::write(run_dir.join("events.json"), br#"[]"#).expect("events");
-        std::fs::write(run_dir.join("manifest.json"), br#"{"schemaVersion":"fozzy.run_manifest.v1"}"#).expect("manifest");
+        std::fs::write(run_dir.join("manifest.json"), valid_manifest_json("r1")).expect("manifest");
         std::fs::write(run_dir.join("trace.fozzy"), br#"{"format":"fozzy-trace"}"#).expect("trace");
 
         let cfg = crate::Config {
@@ -878,7 +960,7 @@ mod tests {
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(
             run_dir.join("manifest.json"),
-            br#"{"schemaVersion":"fozzy.run_manifest.v1","reportPath":"report.json"}"#,
+            valid_manifest_json("r1"),
         )
         .expect("manifest");
         let cfg = crate::Config {
@@ -904,7 +986,7 @@ mod tests {
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
         std::fs::write(run_dir.join("events.json"), br#"[]"#).expect("events");
-        std::fs::write(run_dir.join("manifest.json"), br#"{"schemaVersion":"fozzy.run_manifest.v1"}"#).expect("manifest");
+        std::fs::write(run_dir.join("manifest.json"), valid_manifest_json("r1")).expect("manifest");
         std::fs::write(run_dir.join("trace.fozzy"), br#"{"format":"fozzy-trace"}"#).expect("trace");
         let cfg = crate::Config {
             base_dir: root.join(".fozzy"),
@@ -917,5 +999,60 @@ mod tests {
 
         let err = export_reproducer_pack(&cfg, "r1", &out_dir).expect_err("must reject stale output dir");
         assert!(err.to_string().contains("non-empty output directory with stale entries"));
+    }
+
+    #[test]
+    fn pack_and_export_reject_invalid_manifest_bytes() {
+        let root = std::env::temp_dir().join(format!("fozzy-pack-bad-manifest-{}", uuid::Uuid::new_v4()));
+        let run_dir = root.join(".fozzy").join("runs").join("r1");
+        std::fs::create_dir_all(&run_dir).expect("mkdir");
+        std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
+        std::fs::write(run_dir.join("events.json"), br#"[]"#).expect("events");
+        std::fs::write(run_dir.join("manifest.json"), br#"not-json"#).expect("manifest");
+        std::fs::write(run_dir.join("trace.fozzy"), br#"{"format":"fozzy-trace"}"#).expect("trace");
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+        };
+        let out_pack = root.join("pack.zip");
+        let out_export = root.join("export.zip");
+
+        let err_pack = export_reproducer_pack(&cfg, "r1", &out_pack).expect_err("pack must fail");
+        assert!(err_pack.to_string().contains("invalid manifest"));
+        assert!(!out_pack.exists(), "pack zip should not be created");
+
+        let err_export = export_artifacts(&cfg, "r1", &out_export).expect_err("export must fail");
+        assert!(err_export.to_string().contains("invalid manifest"));
+        assert!(!out_export.exists(), "export zip should not be created");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zip_output_rejects_symlinked_parent_components() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("fozzy-pack-symlink-parent-{}", uuid::Uuid::new_v4()));
+        let run_dir = root.join(".fozzy").join("runs").join("r1");
+        std::fs::create_dir_all(&run_dir).expect("mkdir");
+        std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
+        std::fs::write(run_dir.join("events.json"), br#"[]"#).expect("events");
+        std::fs::write(run_dir.join("manifest.json"), br#"{"schemaVersion":"fozzy.run_manifest.v1","runId":"r1","mode":"run","status":"pass","seed":1,"startedAt":"2026-01-01T00:00:00Z","finishedAt":"2026-01-01T00:00:00Z","durationMs":0,"findingsCount":0}"#).expect("manifest");
+        std::fs::write(run_dir.join("trace.fozzy"), br#"{"format":"fozzy-trace"}"#).expect("trace");
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+        };
+
+        let real_out_dir = root.join("real-out");
+        std::fs::create_dir_all(&real_out_dir).expect("real out");
+        let linked_parent = root.join("linked");
+        symlink(&real_out_dir, &linked_parent).expect("symlink parent");
+        let out_pack = linked_parent.join("pack.zip");
+        let out_export = linked_parent.join("export.zip");
+
+        let err_pack = export_reproducer_pack(&cfg, "r1", &out_pack).expect_err("must reject symlink parent");
+        assert!(err_pack.to_string().contains("symlinked output path"));
+        let err_export = export_artifacts(&cfg, "r1", &out_export).expect_err("must reject symlink parent");
+        assert!(err_export.to_string().contains("symlinked output path"));
     }
 }
