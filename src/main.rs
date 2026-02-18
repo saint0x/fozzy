@@ -17,23 +17,23 @@ use fozzy::{
 #[command(about = "deterministic full-stack testing + fuzzing + distributed exploration")]
 struct Cli {
     /// Path to config file. Missing configs are treated as "defaults".
-    #[arg(long, default_value = "fozzy.toml")]
+    #[arg(long, global = true, default_value = "fozzy.toml")]
     config: PathBuf,
 
     /// Working directory for execution.
-    #[arg(long)]
+    #[arg(long, global = true)]
     cwd: Option<PathBuf>,
 
     /// Log level.
-    #[arg(long, default_value = "info")]
+    #[arg(long, global = true, default_value = "info")]
     log: String,
 
     /// Machine-readable output to stdout (JSON).
-    #[arg(long)]
+    #[arg(long, global = true)]
     json: bool,
 
     /// Disable color output.
-    #[arg(long)]
+    #[arg(long, global = true)]
     no_color: bool,
 
     #[command(subcommand)]
@@ -257,7 +257,7 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(normalize_global_args(std::env::args()));
 
     if let Err(err) = init_tracing(&cli.log) {
         // Tracing is best-effort; if it fails, we still continue.
@@ -275,6 +275,50 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(err) => print_error_and_exit(&cli, err),
     }
+}
+
+fn normalize_global_args(args: impl IntoIterator<Item = String>) -> Vec<String> {
+    let all: Vec<String> = args.into_iter().collect();
+    if all.is_empty() {
+        return all;
+    }
+
+    let mut globals = Vec::new();
+    let mut rest = Vec::new();
+
+    let mut i = 1usize;
+    while i < all.len() {
+        let arg = &all[i];
+        match arg.as_str() {
+            "--json" | "--no-color" => {
+                globals.push(arg.clone());
+                i += 1;
+            }
+            "--config" | "--cwd" | "--log" => {
+                globals.push(arg.clone());
+                if i + 1 < all.len() {
+                    globals.push(all[i + 1].clone());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ if arg.starts_with("--config=") || arg.starts_with("--cwd=") || arg.starts_with("--log=") => {
+                globals.push(arg.clone());
+                i += 1;
+            }
+            _ => {
+                rest.push(arg.clone());
+                i += 1;
+            }
+        }
+    }
+
+    let mut normalized = Vec::with_capacity(all.len());
+    normalized.push(all[0].clone());
+    normalized.extend(globals);
+    normalized.extend(rest);
+    normalized
 }
 
 fn init_tracing(level: &str) -> anyhow::Result<()> {

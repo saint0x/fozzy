@@ -41,3 +41,19 @@ fn compile_globset(patterns: &[String]) -> FozzyResult<GlobSet> {
     b.build()
         .map_err(|e| FozzyError::InvalidArgument(format!("invalid globset: {e}")))
 }
+
+pub fn default_min_trace_path(input: &std::path::Path) -> PathBuf {
+    let parent = input.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+    let file_name = input
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("trace.fozzy");
+
+    let out_name = if let Some(stem) = file_name.strip_suffix(".fozzy") {
+        format!("{stem}.min.fozzy")
+    } else {
+        format!("{file_name}.min.fozzy")
+    };
+
+    parent.join(out_name)
+}

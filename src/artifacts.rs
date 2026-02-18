@@ -44,6 +44,26 @@ pub fn artifacts_command(config: &Config, command: &ArtifactCommand) -> FozzyRes
 }
 
 fn artifacts_list(config: &Config, run: &str) -> FozzyResult<Vec<ArtifactEntry>> {
+    let run_path = PathBuf::from(run);
+    if run_path.exists()
+        && run_path.is_file()
+        && run_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("fozzy"))
+    {
+        let mut out = Vec::new();
+        push_if_exists(&mut out, ArtifactKind::Trace, run_path.clone())?;
+        if let Some(parent) = run_path.parent() {
+            push_if_exists(&mut out, ArtifactKind::Timeline, parent.join("timeline.json"))?;
+            push_if_exists(&mut out, ArtifactKind::Report, parent.join("report.json"))?;
+            push_if_exists(&mut out, ArtifactKind::Events, parent.join("events.json"))?;
+            push_if_exists(&mut out, ArtifactKind::Report, parent.join("report.html"))?;
+            push_if_exists(&mut out, ArtifactKind::Report, parent.join("junit.xml"))?;
+        }
+        return Ok(out);
+    }
+
     let artifacts_dir = resolve_artifacts_dir(config, run)?;
     let mut out = Vec::new();
 

@@ -485,14 +485,7 @@ pub fn shrink_trace(config: &Config, trace_path: TracePath, opt: &ShrinkOptions)
     let out_path = opt
         .out_trace_path
         .clone()
-        .unwrap_or_else(|| {
-            let in_path = trace_path.as_path().to_string_lossy().to_string();
-            if let Some(stripped) = in_path.strip_suffix(".fozzy") {
-                PathBuf::from(format!("{stripped}.min.fozzy"))
-            } else {
-                PathBuf::from(format!("{in_path}.min.fozzy"))
-            }
-        });
+        .unwrap_or_else(|| crate::default_min_trace_path(trace_path.as_path()));
 
     // Re-run once to produce a trace for the minimized scenario.
     let run = run_scenario_replay_inner(
@@ -534,7 +527,12 @@ pub fn shrink_trace(config: &Config, trace_path: TracePath, opt: &ShrinkOptions)
         run.events,
         summary.clone(),
     );
-    trace_out.write_json(&out_path)?;
+    trace_out.write_json(&out_path).map_err(|err| {
+        FozzyError::Trace(format!(
+            "failed to write shrunk trace to {}: {err}",
+            out_path.display()
+        ))
+    })?;
 
     Ok(ShrinkResult {
         out_trace_path: out_path.to_string_lossy().to_string(),

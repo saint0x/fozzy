@@ -295,7 +295,7 @@ pub fn shrink_fuzz_trace(
     let out_path = opt
         .out_trace_path
         .clone()
-        .unwrap_or_else(|| default_min_path(trace_path.as_path()));
+        .unwrap_or_else(|| crate::default_min_trace_path(trace_path.as_path()));
 
     let started_at = wall_time_iso_utc();
     let finished_at = wall_time_iso_utc();
@@ -317,7 +317,12 @@ pub fn shrink_fuzz_trace(
     };
 
     let trace_out = TraceFile::new_fuzz(target_string(&target), &minimized, exec.events, summary.clone());
-    trace_out.write_json(&out_path)?;
+    trace_out.write_json(&out_path).map_err(|err| {
+        FozzyError::Trace(format!(
+            "failed to write shrunk fuzz trace to {}: {err}",
+            out_path.display()
+        ))
+    })?;
 
     Ok(crate::ShrinkResult {
         out_trace_path: out_path.to_string_lossy().to_string(),
@@ -610,15 +615,6 @@ fn stable_edge(label: &str) -> u64 {
     let mut b = [0u8; 8];
     b.copy_from_slice(&h.as_bytes()[..8]);
     u64::from_le_bytes(b)
-}
-
-fn default_min_path(in_path: &Path) -> PathBuf {
-    let in_s = in_path.to_string_lossy().to_string();
-    if let Some(stripped) = in_s.strip_suffix(".fozzy") {
-        PathBuf::from(format!("{stripped}.min.fozzy"))
-    } else {
-        PathBuf::from(format!("{in_s}.min.fozzy"))
-    }
 }
 
 fn gen_seed() -> u64 {

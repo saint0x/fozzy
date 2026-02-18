@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::{
@@ -278,7 +278,7 @@ pub fn shrink_explore_trace(
     let out_path = opt
         .out_trace_path
         .clone()
-        .unwrap_or_else(|| default_min_path(trace_path.as_path()));
+        .unwrap_or_else(|| crate::default_min_trace_path(trace_path.as_path()));
 
     let (status, findings, events, _delivered, _decisions) =
         run_explore_replay_inner(&explore.scenario, seed, explore.schedule, &best)?;
@@ -303,7 +303,12 @@ pub fn shrink_explore_trace(
     };
 
     let trace_out = TraceFile::new_explore(explore.clone(), best, events, summary.clone());
-    trace_out.write_json(&out_path)?;
+    trace_out.write_json(&out_path).map_err(|err| {
+        FozzyError::Trace(format!(
+            "failed to write shrunk explore trace to {}: {err}",
+            out_path.display()
+        ))
+    })?;
 
     Ok(crate::ShrinkResult {
         out_trace_path: out_path.to_string_lossy().to_string(),
@@ -761,15 +766,6 @@ fn bump(next_id: &mut u64) -> u64 {
 
 fn ordered_pair<'a>(a: &'a str, b: &'a str) -> (&'a str, &'a str) {
     if a <= b { (a, b) } else { (b, a) }
-}
-
-fn default_min_path(in_path: &Path) -> PathBuf {
-    let in_s = in_path.to_string_lossy().to_string();
-    if let Some(stripped) = in_s.strip_suffix(".fozzy") {
-        PathBuf::from(format!("{stripped}.min.fozzy"))
-    } else {
-        PathBuf::from(format!("{in_s}.min.fozzy"))
-    }
 }
 
 fn gen_seed() -> u64 {

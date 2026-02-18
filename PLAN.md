@@ -92,6 +92,9 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 ### M9 CI + Reporting
 - ✅ JSON + JUnit + HTML report outputs
 - ✅ `fozzy report show` and basic `fozzy report query --jq` support
+- ✅ `artifacts ls` supports both run-id and `.fozzy` trace paths
+- ✅ Timeline artifact output (`timeline.json`) included in artifact listing
+- ✅ Global CLI flags (like `--json`) are accepted before or after subcommand
 - ☑️ CI semantics are partial (flaky detection + richer policy pending)
 - ⬜ Full report query semantics parity pending
 
@@ -100,7 +103,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ⬜ Performance optimization passes pending
 - ⬜ Memory/trace-size optimization pending
 - ⬜ Trace format compatibility tests pending
-- ⬜ UX polish and extended failure diagnostics pending
+- ☑️ UX polish and diagnostics are partial (shrink default path now deterministic and explicit)
 
 ## Production Backlog (Next Execution Order)
 1. ☑️ Expand M3 with stricter network capability contracts and richer record/replay semantics.
