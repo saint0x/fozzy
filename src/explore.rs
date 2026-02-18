@@ -240,50 +240,105 @@ pub fn shrink_explore_trace(
     }
 
     let seed = trace.summary.identity.seed;
-    let mut best = trace.decisions.clone();
-    let mut candidate = best.clone();
+    let mut best_decisions = trace.decisions.clone();
+    let mut candidate = best_decisions.clone();
     let budget = opt.budget.unwrap_or(Duration::from_secs(15));
     let deadline = Instant::now() + budget;
 
-    let mut chunk = (candidate.len().max(1) + 1) / 2;
-    while chunk > 0 && Instant::now() < deadline && candidate.len() > 1 {
-        let mut improved = false;
-        let mut i = 0usize;
-        while i < candidate.len() && Instant::now() < deadline {
-            let mut trial = candidate.clone();
-            let end = (i + chunk).min(trial.len());
-            trial.drain(i..end);
-            if trial.is_empty() {
+    if opt.minimize == crate::ShrinkMinimize::Schedule || opt.minimize == crate::ShrinkMinimize::All {
+        let mut chunk = (candidate.len().max(1) + 1) / 2;
+        while chunk > 0 && Instant::now() < deadline && candidate.len() > 1 {
+            let mut improved = false;
+            let mut i = 0usize;
+            while i < candidate.len() && Instant::now() < deadline {
+                let mut trial = candidate.clone();
+                let end = (i + chunk).min(trial.len());
+                trial.drain(i..end);
+                if trial.is_empty() {
+                    i += chunk;
+                    continue;
+                }
+
+                let (status, _findings, _events, _delivered, _decisions) =
+                    run_explore_replay_inner(&explore.scenario, seed, explore.schedule, &trial)?;
+                if status != ExitStatus::Pass {
+                    candidate = trial;
+                    improved = true;
+                    continue;
+                }
                 i += chunk;
-                continue;
             }
 
-            let (status, _findings, _events, _delivered, _decisions) =
-                run_explore_replay_inner(&explore.scenario, seed, explore.schedule, &trial)?;
-            if status != ExitStatus::Pass {
-                candidate = trial;
-                improved = true;
-                continue;
+            if !improved {
+                if chunk == 1 {
+                    break;
+                }
+                chunk = (chunk + 1) / 2;
             }
-            i += chunk;
         }
-
-        if !improved {
-            if chunk == 1 {
-                break;
-            }
-            chunk = (chunk + 1) / 2;
-        }
+        best_decisions = candidate;
     }
 
-    best = candidate;
+    let mut shrunk_scenario = explore.scenario.clone();
+    if opt.minimize == crate::ShrinkMinimize::All {
+        let mut steps = shrunk_scenario.steps.clone();
+        let mut chunk = (steps.len().max(1) + 1) / 2;
+        while chunk > 0 && Instant::now() < deadline && steps.len() > 1 {
+            let mut improved = false;
+            let mut i = 0usize;
+            while i < steps.len() && Instant::now() < deadline {
+                let end = (i + chunk).min(steps.len());
+                if !steps[i..end].iter().all(is_shrinkable_setup_step) {
+                    i += chunk;
+                    continue;
+                }
+                let mut trial = steps.clone();
+                trial.drain(i..end);
+                if trial.is_empty() {
+                    i += chunk;
+                    continue;
+                }
+                let trial_scenario = ScenarioV1Explore {
+                    version: shrunk_scenario.version,
+                    name: shrunk_scenario.name.clone(),
+                    nodes: shrunk_scenario.nodes.clone(),
+                    steps: trial.clone(),
+                    invariants: shrunk_scenario.invariants.clone(),
+                };
+                let (status, _findings, _events, _delivered, _decisions) =
+                    run_explore_inner(&trial_scenario, seed, explore.schedule, None, Some(Duration::from_secs(2)))?;
+                if status != ExitStatus::Pass {
+                    steps = trial;
+                    improved = true;
+                    continue;
+                }
+                i += chunk;
+            }
+            if !improved {
+                if chunk == 1 {
+                    break;
+                }
+                chunk = (chunk + 1) / 2;
+            }
+        }
+        shrunk_scenario.steps = steps;
+    }
+
     let out_path = opt
         .out_trace_path
         .clone()
         .unwrap_or_else(|| crate::default_min_trace_path(trace_path.as_path()));
 
-    let (status, findings, events, _delivered, _decisions) =
-        run_explore_replay_inner(&explore.scenario, seed, explore.schedule, &best)?;
+    let (status, findings, events, _delivered, out_decisions) = if opt.minimize == crate::ShrinkMinimize::All {
+        let trial = run_explore_inner(&shrunk_scenario, seed, explore.schedule, None, Some(Duration::from_secs(2)))?;
+        if trial.0 != ExitStatus::Pass {
+            trial
+        } else {
+            run_explore_replay_inner(&explore.scenario, seed, explore.schedule, &best_decisions)?
+        }
+    } else {
+        run_explore_replay_inner(&explore.scenario, seed, explore.schedule, &best_decisions)?
+    };
 
     let started_at = wall_time_iso_utc();
     let finished_at = wall_time_iso_utc();
@@ -304,7 +359,17 @@ pub fn shrink_explore_trace(
         findings,
     };
 
-    let trace_out = TraceFile::new_explore(explore.clone(), best, events, summary.clone());
+    let out_explore = if opt.minimize == crate::ShrinkMinimize::All {
+        ExploreTrace {
+            scenario_path: explore.scenario_path.clone(),
+            scenario: shrunk_scenario,
+            schedule: explore.schedule,
+        }
+    } else {
+        explore.clone()
+    };
+
+    let trace_out = TraceFile::new_explore(out_explore, out_decisions, events, summary.clone());
     trace_out.write_json(&out_path).map_err(|err| {
         FozzyError::Trace(format!(
             "failed to write shrunk explore trace to {}: {err}",
@@ -316,6 +381,17 @@ pub fn shrink_explore_trace(
         out_trace_path: out_path.to_string_lossy().to_string(),
         result: crate::RunResult { summary },
     })
+}
+
+fn is_shrinkable_setup_step(step: &DistributedStep) -> bool {
+    matches!(
+        step,
+        DistributedStep::Partition { .. }
+            | DistributedStep::Heal { .. }
+            | DistributedStep::Crash { .. }
+            | DistributedStep::Restart { .. }
+            | DistributedStep::Tick { .. }
+    )
 }
 
 fn load_explore_scenario(path: &ScenarioPath, nodes_override: Option<usize>) -> FozzyResult<ScenarioV1Explore> {
