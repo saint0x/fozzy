@@ -98,9 +98,16 @@ fn flaky_command(config: &Config, runs: &[String], flake_budget: Option<FlakeBud
     let mut status_counts = std::collections::BTreeMap::<String, usize>::new();
     let mut finding_sets = std::collections::BTreeSet::<Vec<String>>::new();
     let mut signatures = std::collections::BTreeMap::<String, usize>::new();
+    let mut seen_run_ids = std::collections::BTreeSet::<String>::new();
 
     for run in runs {
         let summary = load_summary(config, run)?;
+        if !seen_run_ids.insert(summary.identity.run_id.clone()) {
+            return Err(FozzyError::Report(format!(
+                "duplicate run reference detected for runId={} (duplicates are not allowed in flaky analysis)",
+                summary.identity.run_id
+            )));
+        }
         let status_key = format!("{:?}", summary.status).to_lowercase();
         *status_counts.entry(status_key.clone()).or_insert(0) += 1;
 
@@ -544,5 +551,21 @@ mod tests {
         )
         .expect_err("over budget");
         assert!(err.to_string().contains("flake budget exceeded"));
+    }
+
+    #[test]
+    fn flaky_rejects_duplicate_run_references() {
+        let root = std::env::temp_dir().join(format!("fozzy-flaky-dup-{}", Uuid::new_v4()));
+        let runs = root.join(".fozzy").join("runs");
+        std::fs::create_dir_all(&runs).expect("mkdir");
+        let a = write_summary(&runs, "r1", ExitStatus::Pass);
+        let b = write_summary(&runs, "r2", ExitStatus::Fail);
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: Reporter::Json,
+        };
+
+        let err = flaky_command(&cfg, &[a.clone(), a, b], None).expect_err("must reject duplicates");
+        assert!(err.to_string().contains("duplicate run reference"));
     }
 }

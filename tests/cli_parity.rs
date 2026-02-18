@@ -291,3 +291,47 @@ fn ci_rejects_flake_budget_without_flake_runs() {
     ]);
     assert_eq!(strict.status.code(), Some(2), "strict mode should reject misconfig");
 }
+
+#[test]
+fn report_flaky_rejects_duplicate_inputs() {
+    let ws = temp_workspace("flake-dup");
+    let runs = ws.join(".fozzy").join("runs");
+    std::fs::create_dir_all(&runs).expect("mkdir");
+
+    let mk_report = |id: &str, status: &str| {
+        let dir = runs.join(id);
+        std::fs::create_dir_all(&dir).expect("run dir");
+        let body = format!(
+            r#"{{
+  "status":"{status}",
+  "mode":"run",
+  "identity":{{"runId":"{id}","seed":1}},
+  "startedAt":"2026-01-01T00:00:00Z",
+  "finishedAt":"2026-01-01T00:00:00Z",
+  "durationMs":0
+}}"#
+        );
+        std::fs::write(dir.join("report.json"), body).expect("write report");
+    };
+    mk_report("r1", "pass");
+    mk_report("r2", "fail");
+
+    std::fs::write(ws.join("fozzy.toml"), "base_dir = \".fozzy\"\n").expect("write config");
+    let cfg = ws.join("fozzy.toml").to_string_lossy().to_string();
+    let cwd = ws.to_string_lossy().to_string();
+
+    let out = run_cli(&[
+        "report".into(),
+        "flaky".into(),
+        "r1".into(),
+        "r1".into(),
+        "r2".into(),
+        "--flake-budget".into(),
+        "10".into(),
+        "--cwd".into(),
+        cwd,
+        "--config".into(),
+        cfg,
+    ]);
+    assert_eq!(out.status.code(), Some(2), "duplicate runs should be rejected");
+}
