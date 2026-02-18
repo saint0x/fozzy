@@ -1,6 +1,7 @@
 //! Reporting types and renderers.
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -145,6 +146,61 @@ impl RunSummary {
 pub struct ReportOutput {
     pub format: Reporter,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunManifest {
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: String,
+    #[serde(rename = "runId")]
+    pub run_id: String,
+    pub mode: RunMode,
+    pub status: ExitStatus,
+    pub seed: u64,
+    #[serde(rename = "startedAt")]
+    pub started_at: String,
+    #[serde(rename = "finishedAt")]
+    pub finished_at: String,
+    #[serde(rename = "durationMs")]
+    pub duration_ms: u64,
+    #[serde(rename = "tracePath", skip_serializing_if = "Option::is_none")]
+    pub trace_path: Option<String>,
+    #[serde(rename = "reportPath", skip_serializing_if = "Option::is_none")]
+    pub report_path: Option<String>,
+    #[serde(rename = "artifactsDir", skip_serializing_if = "Option::is_none")]
+    pub artifacts_dir: Option<String>,
+    #[serde(rename = "findingsCount")]
+    pub findings_count: usize,
+    #[serde(rename = "testsPassed", skip_serializing_if = "Option::is_none")]
+    pub tests_passed: Option<u64>,
+    #[serde(rename = "testsFailed", skip_serializing_if = "Option::is_none")]
+    pub tests_failed: Option<u64>,
+    #[serde(rename = "testsSkipped", skip_serializing_if = "Option::is_none")]
+    pub tests_skipped: Option<u64>,
+}
+
+pub fn write_run_manifest(summary: &RunSummary, artifacts_dir: &Path) -> crate::FozzyResult<PathBuf> {
+    std::fs::create_dir_all(artifacts_dir)?;
+    let manifest = RunManifest {
+        schema_version: "fozzy.run_manifest.v1".to_string(),
+        run_id: summary.identity.run_id.clone(),
+        mode: summary.mode,
+        status: summary.status,
+        seed: summary.identity.seed,
+        started_at: summary.started_at.clone(),
+        finished_at: summary.finished_at.clone(),
+        duration_ms: summary.duration_ms,
+        trace_path: summary.identity.trace_path.clone(),
+        report_path: summary.identity.report_path.clone(),
+        artifacts_dir: summary.identity.artifacts_dir.clone(),
+        findings_count: summary.findings.len(),
+        tests_passed: summary.tests.as_ref().map(|t| t.passed),
+        tests_failed: summary.tests.as_ref().map(|t| t.failed),
+        tests_skipped: summary.tests.as_ref().map(|t| t.skipped),
+    };
+    let out = artifacts_dir.join("manifest.json");
+    std::fs::write(&out, serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(out)
 }
 
 pub fn render_junit_xml(summary: &RunSummary) -> String {

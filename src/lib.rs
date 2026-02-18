@@ -8,6 +8,8 @@ mod clock;
 mod config;
 #[path = "cmd/corpus.rs"]
 mod corpus;
+#[path = "cmd/ci.rs"]
+mod ci;
 #[path = "model/decisions.rs"]
 mod decisions;
 #[path = "platform/duration.rs"]
@@ -43,6 +45,7 @@ pub use artifacts::*;
 pub use clock::*;
 pub use config::*;
 pub use corpus::*;
+pub use ci::*;
 pub use decisions::*;
 pub use duration::*;
 pub use engine::*;

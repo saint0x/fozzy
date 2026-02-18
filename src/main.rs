@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use fozzy::{
-    ArtifactCommand, Config, CorpusCommand, ExitStatus, FozzyDuration, InitTemplate, ReportCommand,
+    ArtifactCommand, CiOptions, Config, CorpusCommand, ExitStatus, FozzyDuration, InitTemplate, ReportCommand,
     ExploreOptions, FuzzMode, FuzzOptions, FuzzTarget, RecordCollisionPolicy, Reporter, RunOptions, RunSummary,
     ScenarioPath, ScheduleStrategy, ShrinkMinimize, TracePath,
 };
@@ -290,6 +290,18 @@ enum Command {
 
     /// Print environment + capability backend info
     Env,
+
+    /// Run canonical CI gate checks for reproducibility/integrity
+    Ci {
+        /// Trace path used as the anchor artifact for verify/replay/export checks.
+        trace: PathBuf,
+        /// Optional run ids/trace paths used for flake-rate budget checks.
+        #[arg(long = "flake-run")]
+        flake_runs: Vec<String>,
+        /// Maximum allowed flake rate percentage.
+        #[arg(long = "flake-budget")]
+        flake_budget: Option<f64>,
+    },
 
     /// Print version and build info
     Version,
@@ -644,6 +656,23 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
         Command::Env => {
             let info = fozzy::env_info(config);
             print_json_or_text(cli, &info)?;
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Ci {
+            trace,
+            flake_runs,
+            flake_budget,
+        } => {
+            let out = fozzy::ci_command(
+                config,
+                &CiOptions {
+                    trace: trace.clone(),
+                    flake_runs: flake_runs.clone(),
+                    flake_budget_pct: *flake_budget,
+                },
+            )?;
+            print_json_or_text(cli, &out)?;
             Ok(ExitCode::SUCCESS)
         }
 

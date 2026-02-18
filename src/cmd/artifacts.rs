@@ -14,6 +14,7 @@ pub enum ArtifactCommand {
     Ls { run: String },
     Diff { left: String, right: String },
     Export { run: String, #[arg(long)] out: PathBuf },
+    Pack { run: String, #[arg(long)] out: PathBuf },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +24,7 @@ pub enum ArtifactKind {
     Timeline,
     Events,
     Report,
+    Manifest,
     Coverage,
     MinRepro,
     Logs,
@@ -124,6 +126,10 @@ pub fn artifacts_command(config: &Config, command: &ArtifactCommand) -> FozzyRes
             export_artifacts(config, run, out)?;
             Ok(ArtifactOutput::Exported)
         }
+        ArtifactCommand::Pack { run, out } => {
+            export_reproducer_pack(config, run, out)?;
+            Ok(ArtifactOutput::Exported)
+        }
     }
 }
 
@@ -143,6 +149,7 @@ fn artifacts_list(config: &Config, run: &str) -> FozzyResult<Vec<ArtifactEntry>>
             push_if_exists(&mut out, ArtifactKind::Report, parent.join("report.json"))?;
             push_if_exists(&mut out, ArtifactKind::Events, parent.join("events.json"))?;
             push_if_exists(&mut out, ArtifactKind::Coverage, parent.join("coverage.json"))?;
+            push_if_exists(&mut out, ArtifactKind::Manifest, parent.join("manifest.json"))?;
             push_if_exists(&mut out, ArtifactKind::Report, parent.join("report.html"))?;
             push_if_exists(&mut out, ArtifactKind::Report, parent.join("junit.xml"))?;
         }
@@ -175,10 +182,66 @@ fn artifacts_list(config: &Config, run: &str) -> FozzyResult<Vec<ArtifactEntry>>
     push_if_exists(&mut out, ArtifactKind::Report, artifacts_dir.join("report.json"))?;
     push_if_exists(&mut out, ArtifactKind::Events, artifacts_dir.join("events.json"))?;
     push_if_exists(&mut out, ArtifactKind::Coverage, artifacts_dir.join("coverage.json"))?;
+    push_if_exists(&mut out, ArtifactKind::Manifest, artifacts_dir.join("manifest.json"))?;
     push_if_exists(&mut out, ArtifactKind::Report, artifacts_dir.join("report.html"))?;
     push_if_exists(&mut out, ArtifactKind::Report, artifacts_dir.join("junit.xml"))?;
 
     Ok(out)
+}
+
+fn export_reproducer_pack(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
+    let entries = artifacts_list(config, run)?;
+    let mut files: Vec<PathBuf> = entries
+        .into_iter()
+        .map(|e| PathBuf::from(e.path))
+        .filter(|p| p.exists() && p.is_file())
+        .collect();
+    files.sort();
+    files.dedup();
+
+    if files.is_empty() {
+        return Err(crate::FozzyError::InvalidArgument(format!(
+            "no artifacts found for {run:?}"
+        )));
+    }
+
+    let meta_dir = std::env::temp_dir().join(format!("fozzy-pack-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&meta_dir)?;
+    let meta_files = vec![
+        ("env.json", serde_json::to_vec_pretty(&crate::env_info(config))?),
+        ("version.json", serde_json::to_vec_pretty(&crate::version_info())?),
+        (
+            "commandline.json",
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "argv": std::env::args().collect::<Vec<String>>(),
+            }))?,
+        ),
+    ];
+    for (name, bytes) in meta_files {
+        std::fs::write(meta_dir.join(name), bytes)?;
+    }
+    files.push(meta_dir.join("env.json"));
+    files.push(meta_dir.join("version.json"));
+    files.push(meta_dir.join("commandline.json"));
+
+    let res = if out
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("zip"))
+    {
+        export_artifacts_zip(&files, out)
+    } else {
+        std::fs::create_dir_all(out)?;
+        for src in files {
+            let name = src
+                .file_name()
+                .ok_or_else(|| crate::FozzyError::InvalidArgument(format!("invalid artifact path: {}", src.display())))?;
+            std::fs::copy(&src, out.join(name))?;
+        }
+        Ok(())
+    };
+    let _ = std::fs::remove_dir_all(meta_dir);
+    res
 }
 
 fn export_artifacts(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
@@ -560,5 +623,30 @@ mod tests {
         let err = export_artifacts(&cfg, run_id, &out).expect_err("must fail");
         assert!(err.to_string().contains("no artifacts found"));
         assert!(!out.exists(), "zip should not exist on failure");
+    }
+
+    #[test]
+    fn pack_includes_runtime_metadata_files() {
+        let root = std::env::temp_dir().join(format!("fozzy-pack-test-{}", uuid::Uuid::new_v4()));
+        let run_dir = root.join(".fozzy").join("runs").join("r1");
+        std::fs::create_dir_all(&run_dir).expect("mkdir");
+        std::fs::write(run_dir.join("report.json"), b"{}").expect("report");
+        std::fs::write(run_dir.join("events.json"), b"[]").expect("events");
+        std::fs::write(run_dir.join("trace.fozzy"), b"{}").expect("trace");
+        let out = root.join("pack.zip");
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+        };
+        export_reproducer_pack(&cfg, "r1", &out).expect("pack");
+        let file = std::fs::File::open(&out).expect("zip");
+        let mut z = zip::ZipArchive::new(file).expect("zip parse");
+        let mut names = Vec::new();
+        for i in 0..z.len() {
+            names.push(z.by_index(i).expect("entry").name().to_string());
+        }
+        assert!(names.iter().any(|n| n == "env.json"));
+        assert!(names.iter().any(|n| n == "version.json"));
+        assert!(names.iter().any(|n| n == "commandline.json"));
     }
 }

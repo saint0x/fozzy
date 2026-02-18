@@ -110,6 +110,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ Full `jq` parity is still pending (advanced filters/functions not implemented)
 - ✅ `report query` now supports `--list-paths` shape introspection
 - ✅ Missed `report query` paths now return "did you mean ..." suggestions (for example `identity.runId`)
+- ✅ `report flaky` now reports `flakeRatePct` and supports `--flake-budget <pct>` enforcement
 
 ### M10 Hardening
 - ✅ Determinism audit command added (`fozzy doctor --deep --scenario ... --runs ... --seed ...`)
@@ -127,12 +128,15 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ Artifacts export now fails non-zero when no artifacts are produced or input run/trace is missing
 - ✅ Artifacts export ZIP writes are atomic (no empty/corrupt partial output on failure)
 - ✅ CI gate added: export artifact ZIP must exist and pass `unzip -t` integrity validation
+- ✅ Canonical local gate command added: `fozzy ci <trace>` (trace verify + replay outcome class + artifacts zip integrity + optional flake budget)
+- ✅ Deterministic run manifest artifact added: `manifest.json` with fixed schema (`fozzy.run_manifest.v1`) across run modes
+- ✅ Reproducer pack export added: `fozzy artifacts pack <run|trace> --out <dir|zip>` including trace/report/events + env/version/commandline metadata
 - ⬜ CLI contract test matrix across subcommands (flag parity + exit-code matrix) still pending
 - ⬜ Filesystem chaos/security test matrix (read-only, ENOSPC, SIGINT/SIGTERM, symlink/path escape) still pending
 - ⬜ Concurrent stress and retention/repro gates in CI still pending
 - ✅ `--strict` warning-to-error mode added for run/replay/shrink warning findings, `trace verify`, and `doctor`
 - ✅ Local parity/golden hardening tests added: run-like common flag parsing and end-to-end `record -> replay -> shrink -> replay(min)` for run/fuzz/explore
-- ⬜ End-to-end golden flows (`record -> replay -> shrink -> replay(min)`) per mode remain pending
+- ✅ End-to-end golden flows (`record -> replay -> shrink -> replay(min)`) per mode
 
 ## Production Backlog (Next Execution Order)
 1. ✅ Expand M3 with stricter network capability contracts and richer record/replay semantics.

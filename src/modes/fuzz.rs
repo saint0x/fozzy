@@ -194,6 +194,7 @@ pub fn fuzz(config: &Config, target: &FuzzTarget, opt: &FuzzOptions) -> FozzyRes
             };
 
             std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
+            crate::write_run_manifest(&summary, &artifacts_dir)?;
             std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&exec.events)?)?;
             crate::write_timeline(&exec.events, &artifacts_dir.join("timeline.json"))?;
 
@@ -247,6 +248,7 @@ pub fn fuzz(config: &Config, target: &FuzzTarget, opt: &FuzzOptions) -> FozzyRes
     };
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
+    crate::write_run_manifest(&summary, &artifacts_dir)?;
     let coverage_stats = FuzzCoverageStats {
         target: target_string(target),
         executed,
@@ -321,6 +323,7 @@ pub fn replay_fuzz_trace(config: &Config, trace: &TraceFile) -> FozzyResult<crat
     };
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
+    crate::write_run_manifest(&summary, &artifacts_dir)?;
     std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&exec.events)?)?;
     crate::write_timeline(&exec.events, &artifacts_dir.join("timeline.json"))?;
     Ok(crate::RunResult { summary })

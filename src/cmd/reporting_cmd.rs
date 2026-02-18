@@ -23,6 +23,8 @@ pub enum ReportCommand {
     },
     Flaky {
         runs: Vec<String>,
+        #[arg(long)]
+        flake_budget: Option<f64>,
     },
 }
 
@@ -34,6 +36,8 @@ pub struct ReportEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlakyReport {
+    #[serde(rename = "schemaVersion")]
+    pub schema_version: String,
     #[serde(rename = "runCount")]
     pub run_count: usize,
     #[serde(rename = "statusCounts")]
@@ -42,6 +46,8 @@ pub struct FlakyReport {
     pub finding_title_sets: Vec<Vec<String>>,
     #[serde(rename = "isFlaky")]
     pub is_flaky: bool,
+    #[serde(rename = "flakeRatePct")]
+    pub flake_rate_pct: f64,
 }
 
 pub fn report_command(config: &Config, command: &ReportCommand) -> FozzyResult<serde_json::Value> {
@@ -78,11 +84,11 @@ pub fn report_command(config: &Config, command: &ReportCommand) -> FozzyResult<s
             })?;
             query_value(&value, expr)
         }
-        ReportCommand::Flaky { runs } => flaky_command(config, runs),
+        ReportCommand::Flaky { runs, flake_budget } => flaky_command(config, runs, *flake_budget),
     }
 }
 
-fn flaky_command(config: &Config, runs: &[String]) -> FozzyResult<serde_json::Value> {
+fn flaky_command(config: &Config, runs: &[String], flake_budget: Option<f64>) -> FozzyResult<serde_json::Value> {
     if runs.len() < 2 {
         return Err(FozzyError::Report(
             "flaky analysis requires at least two runs/traces".to_string(),
@@ -91,24 +97,52 @@ fn flaky_command(config: &Config, runs: &[String]) -> FozzyResult<serde_json::Va
 
     let mut status_counts = std::collections::BTreeMap::<String, usize>::new();
     let mut finding_sets = std::collections::BTreeSet::<Vec<String>>::new();
+    let mut signatures = std::collections::BTreeMap::<String, usize>::new();
 
     for run in runs {
         let summary = load_summary(config, run)?;
         let status_key = format!("{:?}", summary.status).to_lowercase();
-        *status_counts.entry(status_key).or_insert(0) += 1;
+        *status_counts.entry(status_key.clone()).or_insert(0) += 1;
 
         let mut titles: Vec<String> = summary.findings.iter().map(|f| f.title.clone()).collect();
         titles.sort();
         titles.dedup();
         finding_sets.insert(titles);
+        let sig = format!(
+            "{status_key}|{}",
+            summary
+                .findings
+                .iter()
+                .map(|f| f.title.as_str())
+                .collect::<Vec<_>>()
+                .join("|")
+        );
+        *signatures.entry(sig).or_insert(0) += 1;
     }
 
     let is_flaky = status_counts.len() > 1 || finding_sets.len() > 1;
+    let dominant = signatures.values().copied().max().unwrap_or(0) as f64;
+    let total = runs.len() as f64;
+    let flake_rate_pct = if total == 0.0 {
+        0.0
+    } else {
+        ((total - dominant) / total) * 100.0
+    };
+    if let Some(budget) = flake_budget {
+        if flake_rate_pct > budget {
+            return Err(FozzyError::Report(format!(
+                "flake budget exceeded: {:.2}% > {:.2}%",
+                flake_rate_pct, budget
+            )));
+        }
+    }
     let out = FlakyReport {
+        schema_version: "fozzy.flaky_report.v1".to_string(),
         run_count: runs.len(),
         status_counts,
         finding_title_sets: finding_sets.into_iter().collect(),
         is_flaky,
+        flake_rate_pct,
     };
     Ok(serde_json::to_value(out)?)
 }
@@ -382,6 +416,40 @@ fn parse_expr(expr: &str) -> FozzyResult<Vec<QueryToken>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ExitStatus, Finding, FindingKind, RunIdentity, RunMode};
+    use uuid::Uuid;
+
+    fn write_summary(base: &std::path::Path, run_id: &str, status: ExitStatus) -> String {
+        let dir = base.join(run_id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let summary = RunSummary {
+            status,
+            mode: RunMode::Run,
+            identity: RunIdentity {
+                run_id: run_id.to_string(),
+                seed: 1,
+                trace_path: None,
+                report_path: Some(dir.join("report.json").to_string_lossy().to_string()),
+                artifacts_dir: Some(dir.to_string_lossy().to_string()),
+            },
+            started_at: "2026-01-01T00:00:00Z".to_string(),
+            finished_at: "2026-01-01T00:00:00Z".to_string(),
+            duration_ms: 0,
+            tests: None,
+            findings: if status == ExitStatus::Pass {
+                Vec::new()
+            } else {
+                vec![Finding {
+                    kind: FindingKind::Assertion,
+                    title: "boom".to_string(),
+                    message: "x".to_string(),
+                    location: None,
+                }]
+            },
+        };
+        std::fs::write(dir.join("report.json"), serde_json::to_vec_pretty(&summary).expect("json")).expect("write");
+        run_id.to_string()
+    }
 
     #[test]
     fn query_accepts_dot_index_form() {
@@ -445,5 +513,25 @@ mod tests {
         let paths = list_query_paths(&value);
         assert!(paths.contains(&"identity.runId".to_string()));
         assert!(paths.contains(&"findings[0].title".to_string()));
+    }
+
+    #[test]
+    fn flaky_budget_enforced() {
+        let root = std::env::temp_dir().join(format!("fozzy-flaky-{}", Uuid::new_v4()));
+        let runs = root.join(".fozzy").join("runs");
+        std::fs::create_dir_all(&runs).expect("mkdir");
+        let a = write_summary(&runs, "r1", ExitStatus::Pass);
+        let b = write_summary(&runs, "r2", ExitStatus::Fail);
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: Reporter::Json,
+        };
+
+        let out = flaky_command(&cfg, &[a.clone(), b.clone()], Some(60.0)).expect("within budget");
+        let obj = out.as_object().expect("obj");
+        assert!(obj.get("flakeRatePct").is_some());
+
+        let err = flaky_command(&cfg, &[a, b], Some(10.0)).expect_err("over budget");
+        assert!(err.to_string().contains("flake budget exceeded"));
     }
 }

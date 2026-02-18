@@ -16,6 +16,7 @@ CORE COMMANDS:
   artifacts                 Inspect/export artifacts (traces, timelines, diffs)
   report                    Render / query run reports (JSON, JUnit, HTML)
   doctor                    Diagnose nondeterminism + environment issues
+  ci                        Run canonical local gate checks for a trace
   env                        Print environment + capability backend info
   version                   Print version and build info
 
@@ -62,12 +63,16 @@ ARTIFACTS:
   fozzy artifacts ls <run-id|trace>
   fozzy artifacts diff <left-run-id|trace> <right-run-id|trace>
   fozzy artifacts export <run-id|trace> --out <dir|zip>
+  fozzy artifacts pack <run-id|trace> --out <dir|zip>    (adds env/version/commandline metadata)
 
 REPORT:
   fozzy report show <run-id|trace> [--format json|pretty|junit|html]
   fozzy report query <run-id|trace> --jq <expr>   (path subset: .a.b, a.b, .arr[0], .arr[].field, $.a.b)
   fozzy report query <run-id|trace> --list-paths
-  fozzy report flaky <run-id|trace> <run-id|trace> [more...]
+  fozzy report flaky <run-id|trace> <run-id|trace> [more...] [--flake-budget <pct>]
+
+CI:
+  fozzy ci <trace.fozzy> [--flake-run <run-id|trace>]... [--flake-budget <pct>]
 
 DOCTOR:
   fozzy doctor [--deep] [--scenario <path>] [--runs <n>] [--seed <n>] [--json]

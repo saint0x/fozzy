@@ -300,6 +300,7 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
     };
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
+    crate::write_run_manifest(&summary, &artifacts_dir)?;
 
     if let Some(record_base) = &opt.record_trace_to {
         write_test_traces(record_base, &test_runs, seed, opt.record_collision)?;
@@ -432,6 +433,7 @@ pub fn run_scenario(config: &Config, scenario_path: ScenarioPath, opt: &RunOptio
     };
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report_summary)?)?;
+    crate::write_run_manifest(&report_summary, &artifacts_dir)?;
     std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&run.events)?)?;
     crate::write_timeline(&run.events, &artifacts_dir.join("timeline.json"))?;
 
@@ -537,6 +539,7 @@ pub fn replay_trace(config: &Config, trace_path: TracePath, opt: &ReplayOptions)
     };
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
+    crate::write_run_manifest(&summary, &artifacts_dir)?;
     if opt.dump_events {
         std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&run.events)?)?;
         crate::write_timeline(&run.events, &artifacts_dir.join("timeline.json"))?;

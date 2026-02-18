@@ -80,12 +80,17 @@ pub fn usage_doc() -> UsageDoc {
             UsageItem {
                 command: "fozzy artifacts".to_string(),
                 when: "List/export run files or diff two runs/traces to quickly see artifact/report/trace drift.".to_string(),
-                how: "fozzy artifacts ls <runId>; fozzy artifacts diff <left> <right>; fozzy artifacts export <runId> --out out.zip.".to_string(),
+                how: "fozzy artifacts ls <runId>; fozzy artifacts diff <left> <right>; fozzy artifacts export <runId> --out out.zip; fozzy artifacts pack <runId|trace> --out repro.zip.".to_string(),
             },
             UsageItem {
                 command: "fozzy report".to_string(),
                 when: "Render a run summary in a specific format for CI (JUnit) or humans (HTML/pretty).".to_string(),
-                how: "fozzy report show <runId|trace> --format junit; fozzy report query <runId> --jq '.findings[].title'; fozzy report flaky <run1> <run2>.".to_string(),
+                how: "fozzy report show <runId|trace> --format junit; fozzy report query <runId> --jq '.findings[].title'; fozzy report flaky <run1> <run2> --flake-budget 5.".to_string(),
+            },
+            UsageItem {
+                command: "fozzy ci".to_string(),
+                when: "Run a canonical local gate bundle for one trace: verify, replay outcome check, artifacts zip integrity, optional flake budget.".to_string(),
+                how: "fozzy ci .fozzy/runs/<runId>/trace.fozzy --flake-run <run1> --flake-run <run2> --flake-budget 5 --json.".to_string(),
             },
             UsageItem {
                 command: "fozzy doctor".to_string(),
