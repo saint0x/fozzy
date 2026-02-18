@@ -21,20 +21,26 @@ use crate::{FozzyError, FozzyResult};
 #[serde(rename_all = "snake_case")]
 pub enum ScheduleStrategy {
     Fifo,
+    Bfs,
+    Dfs,
     Random,
     Pct,
+    CoverageGuided,
 }
 
 impl clap::ValueEnum for ScheduleStrategy {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Fifo, Self::Random, Self::Pct]
+        &[Self::Fifo, Self::Bfs, Self::Dfs, Self::Random, Self::Pct, Self::CoverageGuided]
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
         Some(match self {
             Self::Fifo => clap::builder::PossibleValue::new("fifo"),
+            Self::Bfs => clap::builder::PossibleValue::new("bfs"),
+            Self::Dfs => clap::builder::PossibleValue::new("dfs"),
             Self::Random => clap::builder::PossibleValue::new("random"),
             Self::Pct => clap::builder::PossibleValue::new("pct"),
+            Self::CoverageGuided => clap::builder::PossibleValue::new("coverage_guided"),
         })
     }
 }
@@ -461,6 +467,7 @@ fn run_explore_inner(
     let mut events = Vec::new();
     let mut findings = Vec::new();
     let mut decisions: Vec<crate::Decision> = Vec::new();
+    let mut seen_strategy_edges: std::collections::HashSet<u64> = std::collections::HashSet::new();
     let mut delivered = 0u64;
     let mut time_ms = 0u64;
 
@@ -492,7 +499,7 @@ fn run_explore_inner(
             break;
         }
 
-        let pick = pick_index(&deliverable, schedule, &mut rng);
+        let pick = pick_index(&queue, &deliverable, schedule, &mut rng, &mut seen_strategy_edges);
         let idx = deliverable[pick];
         let msg = queue.remove(idx).expect("index exists");
         delivered += 1;
@@ -609,7 +616,14 @@ fn run_explore_replay_inner(
     // This is intentionally permissive for shrink trials.
     let deliverable = deliverable_indices(&queue, &nodes, &net);
     if !deliverable.is_empty() {
-        let idx = deliverable[pick_index(&deliverable, schedule, &mut rng)];
+        let mut seen_strategy_edges: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let idx = deliverable[pick_index(
+            &queue,
+            &deliverable,
+            schedule,
+            &mut rng,
+            &mut seen_strategy_edges,
+        )];
         let msg = queue.remove(idx).expect("index exists");
         delivered += 1;
         deliver_message(msg, &mut nodes, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
@@ -1001,10 +1015,31 @@ fn deliverable_indices(queue: &VecDeque<Message>, nodes: &BTreeMap<String, Node>
     out
 }
 
-fn pick_index(deliverable: &[usize], strategy: ScheduleStrategy, rng: &mut ChaCha20Rng) -> usize {
+fn pick_index(
+    queue: &VecDeque<Message>,
+    deliverable: &[usize],
+    strategy: ScheduleStrategy,
+    rng: &mut ChaCha20Rng,
+    seen_edges: &mut std::collections::HashSet<u64>,
+) -> usize {
     match strategy {
-        ScheduleStrategy::Fifo => 0,
+        ScheduleStrategy::Fifo | ScheduleStrategy::Bfs => 0,
+        ScheduleStrategy::Dfs => deliverable.len().saturating_sub(1),
         ScheduleStrategy::Random | ScheduleStrategy::Pct => {
+            if deliverable.is_empty() {
+                0
+            } else {
+                (rng.next_u64() as usize) % deliverable.len()
+            }
+        }
+        ScheduleStrategy::CoverageGuided => {
+            for (pos, idx) in deliverable.iter().enumerate() {
+                let m = &queue[*idx];
+                let edge = stable_edge(&format!("{}|{}|{}|{}", m.kind, m.from, m.to, m.key));
+                if seen_edges.insert(edge) {
+                    return pos;
+                }
+            }
             if deliverable.is_empty() {
                 0
             } else {
@@ -1035,4 +1070,11 @@ fn rng_from_seed(seed: u64) -> ChaCha20Rng {
     let mut seed32 = [0u8; 32];
     seed32.copy_from_slice(&seed_bytes[..32]);
     ChaCha20Rng::from_seed(seed32)
+}
+
+fn stable_edge(label: &str) -> u64 {
+    let h = blake3::hash(label.as_bytes());
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&h.as_bytes()[..8]);
+    u64::from_le_bytes(b)
 }

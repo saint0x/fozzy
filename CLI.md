@@ -34,6 +34,7 @@ EXPLORE (distributed):
             [--nodes <n>] [--faults <preset|file>] [--schedule <strategy>]
             [--checker <name>] [--record <path>] [--shrink on|off]
             [--reporter <...>] [--minimize]
+  schedules: fifo|bfs|dfs|random|pct|coverage_guided
   presets: --faults none|partition-first-two|heal-first-two|crash-first|restart-first
   checkers: --checker kv_all_equal:<key>|kv_present_on_all:<key>|kv_node_equals:<node>:<key>:<value>
   note: `--checker` overrides scenario invariants; `kv_all_equal` is evaluated as a final-state convergence invariant.

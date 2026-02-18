@@ -78,7 +78,8 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ `--checker` now truly overrides scenario invariants (does not append)
 - ✅ Additional invariant checkers (`kv_present_on_all`, `kv_node_equals`)
 - ✅ Fault/search strategy depth is partial
-- ⬜ Full strategy suite and checker ecosystem pending
+- ✅ Expanded strategy suite (`fifo`, `bfs`, `dfs`, `random`, `pct`, `coverage_guided`)
+- ⬜ Full checker ecosystem pending
 
 ### M7 Shrinking Engine
 - ✅ Input/step shrinking for run traces

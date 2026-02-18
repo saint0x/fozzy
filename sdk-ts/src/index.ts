@@ -89,7 +89,7 @@ export interface FuzzOptions {
   minimize?: boolean;
 }
 
-export type Schedule = "fifo" | "random" | "pct";
+export type Schedule = "fifo" | "bfs" | "dfs" | "random" | "pct" | "coverage_guided";
 export interface ExploreOptions {
   seed?: number;
   time?: Duration;
@@ -440,7 +440,7 @@ async function spawnCollect(
       opts.onStderr?.(s);
     });
     cp.on("error", reject);
-    cp.on("close", (code) => {
+    cp.on("close", (code: number | null) => {
       resolve({ code: code ?? 1, stdout: stdout.trim(), stderr: stderr.trim() });
     });
 
