@@ -138,7 +138,7 @@ fn query_value(root: &serde_json::Value, expr: &str) -> FozzyResult<serde_json::
     if expr == "." || expr == "$" {
         return Ok(root.clone());
     }
-    let normalized = normalize_query_expr(expr)?;
+    let normalized = apply_query_aliases(&normalize_query_expr(expr)?);
     let tokens = parse_expr(&normalized)?;
     let mut current: Vec<&serde_json::Value> = vec![root];
     for token in tokens {
@@ -190,6 +190,29 @@ fn query_value(root: &serde_json::Value, expr: &str) -> FozzyResult<serde_json::
     Ok(serde_json::Value::Array(
         current.into_iter().cloned().collect(),
     ))
+}
+
+fn apply_query_aliases(expr: &str) -> String {
+    // Common DX aliases for top-level identity fields.
+    // Example: `runId` -> `.identity.runId`.
+    const ALIASES: &[(&str, &str)] = &[
+        (".runId", ".identity.runId"),
+        (".seed", ".identity.seed"),
+        (".tracePath", ".identity.tracePath"),
+        (".reportPath", ".identity.reportPath"),
+        (".artifactsDir", ".identity.artifactsDir"),
+    ];
+    for (from, to) in ALIASES {
+        if expr == *from {
+            return (*to).to_string();
+        }
+        if let Some(rest) = expr.strip_prefix(from) {
+            if rest.starts_with('.') || rest.starts_with('[') {
+                return format!("{to}{rest}");
+            }
+        }
+    }
+    expr.to_string()
 }
 
 fn normalize_query_expr(expr: &str) -> FozzyResult<String> {

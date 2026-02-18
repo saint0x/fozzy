@@ -328,18 +328,19 @@ fn write_test_traces(record_base: &PathBuf, runs: &[ScenarioRun], seed: u64) -> 
     }
 
     let parent = record_base.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let stem = record_base
-        .file_stem()
+    let file_name = record_base
+        .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("test-trace");
+        .unwrap_or("test-trace.fozzy");
+    let base = if file_name.ends_with(".fozzy") {
+        file_name.trim_end_matches(".fozzy")
+    } else {
+        file_name
+    };
     std::fs::create_dir_all(parent)?;
 
     for (idx, run) in runs.iter().enumerate() {
-        let out = parent.join(format!(
-            "{stem}.{}.{}.fozzy",
-            idx + 1,
-            sanitize_trace_component(&run.scenario_embedded.name)
-        ));
+        let out = parent.join(format!("{base}.{}.fozzy", idx + 1));
         let summary = RunSummary {
             status: run.status,
             mode: RunMode::Test,
@@ -367,18 +368,6 @@ fn write_test_traces(record_base: &PathBuf, runs: &[ScenarioRun], seed: u64) -> 
         trace.write_json(&out)?;
     }
     Ok(())
-}
-
-fn sanitize_trace_component(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-            out.push(ch);
-        } else {
-            out.push('-');
-        }
-    }
-    out.trim_matches('-').to_string()
 }
 
 pub fn run_scenario(config: &Config, scenario_path: ScenarioPath, opt: &RunOptions) -> FozzyResult<RunResult> {
