@@ -992,4 +992,40 @@ mod tests {
         assert!(err.to_string().contains("corpus directory has no files to export"));
         assert!(!out.exists(), "must not create zip for empty source");
     }
+
+    #[test]
+    fn export_rejects_file_source_path() {
+        let root = std::env::temp_dir().join(format!("fozzy-corpus-export-file-source-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("root");
+        let src = root.join("source.bin");
+        std::fs::write(&src, b"payload").expect("source");
+        let out = root.join("out.zip");
+
+        let err = export_zip(&src, &out).expect_err("must reject non-directory source");
+        assert!(err.to_string().contains("corpus export source is not a directory"));
+        assert!(!out.exists(), "must not create zip for non-directory source");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_failure_does_not_clobber_existing_output_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!("fozzy-corpus-export-clobber-{}", uuid::Uuid::new_v4()));
+        let src = root.join("corpus");
+        std::fs::create_dir_all(&src).expect("src");
+        let unreadable = src.join("secret.bin");
+        std::fs::write(&unreadable, b"secret").expect("file");
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+
+        let out = root.join("out.zip");
+        std::fs::write(&out, b"KEEP").expect("seed output");
+
+        let err = export_zip(&src, &out).expect_err("must fail on unreadable source");
+        assert!(err.to_string().contains("Permission denied"));
+        assert_eq!(std::fs::read(&out).expect("out read"), b"KEEP");
+
+        // cleanup for tempdir removal
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).expect("restore chmod");
+    }
 }

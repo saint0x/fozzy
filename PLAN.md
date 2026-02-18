@@ -147,6 +147,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ `corpus import` now refuses overwriting existing output files, preventing duplicate/fallback overwrite behavior during import
 - ✅ `corpus export --out <zip>` now rejects symlinked output files and symlinked parent path components (strict and non-strict behavior consistent)
 - ✅ `corpus export` now fails non-zero for missing/invalid or empty source corpus directories (no empty zip success artifacts)
+- ✅ `corpus export` failure paths are atomic: unreadable source failures do not create output zips and do not clobber pre-existing output files
 - ✅ `artifacts pack --out <zip>` is now byte-deterministic for the same run (stable metadata payload and fixed ZIP entry timestamps)
 - ⬜ CLI contract test matrix across subcommands (flag parity + exit-code matrix) still pending
 - ⬜ Filesystem chaos/security test matrix (read-only, ENOSPC, SIGINT/SIGTERM, symlink/path escape) still pending
