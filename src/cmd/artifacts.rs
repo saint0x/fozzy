@@ -232,6 +232,7 @@ fn export_reproducer_pack(config: &Config, run: &str, out: &Path) -> FozzyResult
         export_artifacts_zip(&files, out)
     } else {
         std::fs::create_dir_all(out)?;
+        validate_copy_targets_secure(&files, out)?;
         for src in files {
             copy_file_into_dir_secure(&src, out)?;
         }
@@ -267,6 +268,7 @@ fn export_artifacts(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
     }
 
     std::fs::create_dir_all(out)?;
+    validate_copy_targets_secure(&files, out)?;
 
     for src in files {
         copy_file_into_dir_secure(&src, out)?;
@@ -604,6 +606,49 @@ fn copy_file_into_dir_secure(src: &Path, out_dir: &Path) -> FozzyResult<()> {
     Ok(())
 }
 
+fn validate_copy_targets_secure(files: &[PathBuf], out_dir: &Path) -> FozzyResult<()> {
+    if out_dir.exists() {
+        let out_md = std::fs::symlink_metadata(out_dir)?;
+        if out_md.file_type().is_symlink() {
+            return Err(crate::FozzyError::InvalidArgument(format!(
+                "refusing to write into symlinked output directory: {}",
+                out_dir.display()
+            )));
+        }
+    }
+
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    for src in files {
+        let name = src
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| crate::FozzyError::InvalidArgument(format!("invalid artifact path: {}", src.display())))?
+            .to_string();
+        if !seen.insert(name.clone()) {
+            return Err(crate::FozzyError::InvalidArgument(format!(
+                "duplicate output file target detected: {name}"
+            )));
+        }
+        let dst = out_dir.join(&name);
+        if dst.exists() {
+            let dst_md = std::fs::symlink_metadata(&dst)?;
+            if dst_md.file_type().is_symlink() {
+                return Err(crate::FozzyError::InvalidArgument(format!(
+                    "refusing to overwrite symlinked output file: {}",
+                    dst.display()
+                )));
+            }
+            if !dst_md.is_file() {
+                return Err(crate::FozzyError::InvalidArgument(format!(
+                    "refusing to overwrite non-file output path: {}",
+                    dst.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -713,5 +758,34 @@ mod tests {
         assert!(err.to_string().contains("symlinked output file"));
         let victim = std::fs::read_to_string(&outside).expect("read victim");
         assert!(victim.contains("victim"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pack_dir_failure_atomic_on_symlink_error() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("fozzy-pack-atomic-{}", uuid::Uuid::new_v4()));
+        let run_dir = root.join(".fozzy").join("runs").join("r1");
+        std::fs::create_dir_all(&run_dir).expect("mkdir");
+        std::fs::write(run_dir.join("report.json"), br#"{"report":true}"#).expect("report");
+        std::fs::write(run_dir.join("events.json"), br#"[]"#).expect("events");
+        std::fs::write(run_dir.join("manifest.json"), br#"{"schemaVersion":"fozzy.run_manifest.v1"}"#).expect("manifest");
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+        };
+
+        let outside = root.join("outside.json");
+        std::fs::write(&outside, br#"{"victim":true}"#).expect("outside");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("out");
+        symlink(&outside, out_dir.join("manifest.json")).expect("symlink");
+
+        let err = export_reproducer_pack(&cfg, "r1", &out_dir).expect_err("must reject symlink overwrite");
+        assert!(err.to_string().contains("symlinked output file"));
+        assert_eq!(std::fs::read(&outside).expect("victim read"), br#"{"victim":true}"#);
+        assert!(!out_dir.join("report.json").exists(), "partial file should not be written");
+        assert!(!out_dir.join("events.json").exists(), "partial file should not be written");
     }
 }

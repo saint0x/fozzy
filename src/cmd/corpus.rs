@@ -1,6 +1,7 @@
 //! Fuzz corpus management.
 
 use clap::Subcommand;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -117,6 +118,18 @@ fn import_zip(zip_path: &Path, out_dir: &Path) -> FozzyResult<()> {
 
     let file = File::open(zip_path)?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| FozzyError::InvalidArgument(format!("invalid zip: {e}")))?;
+    let mut seen_targets = HashSet::new();
+    for i in 0..zip.len() {
+        let f = zip.by_index(i).map_err(|e| FozzyError::InvalidArgument(format!("zip read error: {e}")))?;
+        if f.is_dir() {
+            continue;
+        }
+        let rel = normalize_zip_entry_rel_path(f.name())?;
+        validate_zip_target_secure(out_dir, &rel, &mut seen_targets)?;
+    }
+
+    let file = File::open(zip_path)?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| FozzyError::InvalidArgument(format!("invalid zip: {e}")))?;
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).map_err(|e| FozzyError::InvalidArgument(format!("zip read error: {e}")))?;
         if f.is_dir() {
@@ -189,6 +202,55 @@ fn write_zip_entry_secure(out_dir: &Path, entry_name: &str, bytes: &[u8]) -> Foz
     Ok(())
 }
 
+fn validate_zip_target_secure(out_dir: &Path, rel: &Path, seen_targets: &mut HashSet<PathBuf>) -> FozzyResult<()> {
+    if !seen_targets.insert(rel.to_path_buf()) {
+        return Err(FozzyError::InvalidArgument(format!(
+            "duplicate output file in archive is not allowed: {}",
+            rel.display()
+        )));
+    }
+
+    // Reject symlinked parent components before creating/writing.
+    let mut cur = out_dir.to_path_buf();
+    if let Some(parent) = rel.parent() {
+        for comp in parent.components() {
+            use std::path::Component;
+            let Component::Normal(seg) = comp else {
+                continue;
+            };
+            cur.push(seg);
+            if cur.exists() {
+                let md = std::fs::symlink_metadata(&cur)?;
+                if md.file_type().is_symlink() {
+                    return Err(FozzyError::InvalidArgument(format!(
+                        "refusing to write through symlinked output path: {}",
+                        cur.display()
+                    )));
+                }
+            }
+        }
+    }
+
+    let out_path = out_dir.join(rel);
+    if out_path.exists() {
+        let md = std::fs::symlink_metadata(&out_path)?;
+        if md.file_type().is_symlink() {
+            return Err(FozzyError::InvalidArgument(format!(
+                "refusing to overwrite symlinked output file: {}",
+                out_path.display()
+            )));
+        }
+        if !md.is_file() {
+            return Err(FozzyError::InvalidArgument(format!(
+                "refusing to overwrite non-file output path: {}",
+                out_path.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn normalize_zip_entry_rel_path(name: &str) -> FozzyResult<PathBuf> {
     let path = Path::new(name);
     let mut rel = PathBuf::new();
@@ -243,5 +305,43 @@ mod tests {
         let err = import_zip(&zip_path, &out).expect_err("must fail");
         assert!(err.to_string().contains("symlinked output file"));
         assert_eq!(std::fs::read(&victim).expect("victim read"), b"safe");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn import_failure_atomic_on_symlink_error() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "fozzy-corpus-atomic-symlink-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("root");
+        let zip_path = root.join("in.zip");
+
+        {
+            let file = File::create(&zip_path).expect("zip create");
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("good-1.bin", opts).expect("start 1");
+            zip.write_all(b"one").expect("write 1");
+            zip.start_file("good-2.bin", opts).expect("start 2");
+            zip.write_all(b"two").expect("write 2");
+            zip.start_file("bad.bin", opts).expect("start bad");
+            zip.write_all(b"bad").expect("write bad");
+            zip.finish().expect("finish");
+        }
+
+        let out = root.join("out");
+        std::fs::create_dir_all(&out).expect("out");
+        let victim = root.join("victim.bin");
+        std::fs::write(&victim, b"safe").expect("victim");
+        symlink(&victim, out.join("bad.bin")).expect("symlink");
+
+        let err = import_zip(&zip_path, &out).expect_err("must fail");
+        assert!(err.to_string().contains("symlinked output file"));
+        assert_eq!(std::fs::read(&victim).expect("victim read"), b"safe");
+        assert!(!out.join("good-1.bin").exists(), "good-1 should not be written");
+        assert!(!out.join("good-2.bin").exists(), "good-2 should not be written");
     }
 }
