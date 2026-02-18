@@ -108,6 +108,12 @@ fn export_zip(dir: &Path, out_zip: &Path) -> FozzyResult<()> {
 
 fn import_zip(zip_path: &Path, out_dir: &Path) -> FozzyResult<()> {
     std::fs::create_dir_all(out_dir)?;
+    if std::fs::symlink_metadata(out_dir)?.file_type().is_symlink() {
+        return Err(FozzyError::InvalidArgument(format!(
+            "refusing to import into symlinked output directory: {}",
+            out_dir.display()
+        )));
+    }
 
     let file = File::open(zip_path)?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| FozzyError::InvalidArgument(format!("invalid zip: {e}")))?;
@@ -116,14 +122,126 @@ fn import_zip(zip_path: &Path, out_dir: &Path) -> FozzyResult<()> {
         if f.is_dir() {
             continue;
         }
-        let name = f.name().to_string();
-        let out_path = out_dir.join(name);
-        if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let mut bytes = Vec::new();
         f.read_to_end(&mut bytes)?;
-        std::fs::write(out_path, bytes)?;
+        write_zip_entry_secure(out_dir, f.name(), &bytes)?;
     }
     Ok(())
+}
+
+fn write_zip_entry_secure(out_dir: &Path, entry_name: &str, bytes: &[u8]) -> FozzyResult<()> {
+    let rel = normalize_zip_entry_rel_path(entry_name)?;
+    let out_path = out_dir.join(&rel);
+
+    // Reject symlinked parent components before creating/writing.
+    let mut cur = out_dir.to_path_buf();
+    if let Some(parent) = rel.parent() {
+        for comp in parent.components() {
+            use std::path::Component;
+            let Component::Normal(seg) = comp else {
+                continue;
+            };
+            cur.push(seg);
+            if cur.exists() {
+                let md = std::fs::symlink_metadata(&cur)?;
+                if md.file_type().is_symlink() {
+                    return Err(FozzyError::InvalidArgument(format!(
+                        "refusing to write through symlinked output path: {}",
+                        cur.display()
+                    )));
+                }
+            } else {
+                std::fs::create_dir(&cur)?;
+            }
+        }
+    }
+
+    if out_path.exists() {
+        let md = std::fs::symlink_metadata(&out_path)?;
+        if md.file_type().is_symlink() {
+            return Err(FozzyError::InvalidArgument(format!(
+                "refusing to overwrite symlinked output file: {}",
+                out_path.display()
+            )));
+        }
+        if !md.is_file() {
+            return Err(FozzyError::InvalidArgument(format!(
+                "refusing to overwrite non-file output path: {}",
+                out_path.display()
+            )));
+        }
+        std::fs::remove_file(&out_path)?;
+    }
+
+    let parent = out_path.parent().unwrap_or(out_dir);
+    let tmp_name = format!(
+        ".{}.{}.{}.tmp",
+        out_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("corpus"),
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    );
+    let tmp = parent.join(tmp_name);
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, &out_path)?;
+    Ok(())
+}
+
+fn normalize_zip_entry_rel_path(name: &str) -> FozzyResult<PathBuf> {
+    let path = Path::new(name);
+    let mut rel = PathBuf::new();
+    for comp in path.components() {
+        use std::path::Component;
+        match comp {
+            Component::Normal(seg) => rel.push(seg),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(FozzyError::InvalidArgument(format!(
+                    "unsafe archive entry path rejected: {name}"
+                )));
+            }
+        }
+    }
+    if rel.as_os_str().is_empty() {
+        return Err(FozzyError::InvalidArgument(format!(
+            "unsafe archive entry path rejected: {name}"
+        )));
+    }
+    Ok(rel)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn import_rejects_symlink_target_overwrite() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!("fozzy-corpus-symlink-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("root");
+        let zip_path = root.join("in.zip");
+
+        {
+            let file = File::create(&zip_path).expect("zip create");
+            let mut zip = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("payload.bin", opts).expect("start");
+            zip.write_all(b"evil").expect("write");
+            zip.finish().expect("finish");
+        }
+
+        let out = root.join("out");
+        std::fs::create_dir_all(&out).expect("out");
+        let victim = root.join("victim.bin");
+        std::fs::write(&victim, b"safe").expect("victim");
+        symlink(&victim, out.join("payload.bin")).expect("symlink");
+
+        let err = import_zip(&zip_path, &out).expect_err("must fail");
+        assert!(err.to_string().contains("symlinked output file"));
+        assert_eq!(std::fs::read(&victim).expect("victim read"), b"safe");
+    }
 }
