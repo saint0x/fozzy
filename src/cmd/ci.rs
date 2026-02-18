@@ -31,6 +31,11 @@ pub struct CiReport {
 }
 
 pub fn ci_command(config: &Config, opt: &CiOptions) -> FozzyResult<CiReport> {
+    if opt.flake_budget_pct.is_some() && opt.flake_runs.is_empty() {
+        return Err(FozzyError::InvalidArgument(
+            "--flake-budget requires at least two --flake-run inputs".to_string(),
+        ));
+    }
     let mut checks = Vec::new();
 
     let verify = verify_trace_file(&opt.trace)?;
@@ -191,5 +196,47 @@ mod tests {
         assert!(out.checks.iter().any(|c| c.name == "trace_verify"));
         assert!(out.checks.iter().any(|c| c.name == "replay_outcome_class"));
         assert!(out.checks.iter().any(|c| c.name == "artifacts_zip_integrity"));
+    }
+
+    #[test]
+    fn ci_rejects_budget_without_flake_runs() {
+        let root = std::env::temp_dir().join(format!("fozzy-ci-cmd-budget-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let trace = root.join("trace.fozzy");
+        let raw = r#"{
+          "format":"fozzy-trace",
+          "version":2,
+          "engine":{"version":"0.1.0"},
+          "mode":"run",
+          "scenario_path":null,
+          "scenario":{"version":1,"name":"x","steps":[]},
+          "decisions":[],
+          "events":[],
+          "summary":{
+            "status":"pass",
+            "mode":"run",
+            "identity":{"runId":"r1","seed":1},
+            "startedAt":"2026-01-01T00:00:00Z",
+            "finishedAt":"2026-01-01T00:00:00Z",
+            "durationMs":0
+          }
+        }"#;
+        std::fs::write(&trace, raw).expect("write trace");
+        let cfg = Config {
+            base_dir: root.join(".fozzy"),
+            reporter: Reporter::Json,
+        };
+
+        let err = ci_command(
+            &cfg,
+            &CiOptions {
+                trace,
+                flake_runs: Vec::new(),
+                flake_budget_pct: Some("5".parse().expect("budget")),
+                strict: false,
+            },
+        )
+        .expect_err("must fail");
+        assert!(err.to_string().contains("--flake-budget requires"));
     }
 }

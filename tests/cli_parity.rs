@@ -246,3 +246,48 @@ fn strict_rejects_checksumless_trace_in_verify_and_ci() {
     ]);
     assert_eq!(strict_ci.status.code(), Some(2), "strict ci should fail");
 }
+
+#[test]
+fn ci_rejects_flake_budget_without_flake_runs() {
+    let ws = temp_workspace("ci-budget");
+    let trace = ws.join("trace.fozzy");
+    let raw = r#"{
+      "format":"fozzy-trace",
+      "version":2,
+      "engine":{"version":"0.1.0"},
+      "mode":"run",
+      "scenario_path":null,
+      "scenario":{"version":1,"name":"x","steps":[]},
+      "decisions":[],
+      "events":[],
+      "summary":{
+        "status":"pass",
+        "mode":"run",
+        "identity":{"runId":"r1","seed":1},
+        "startedAt":"2026-01-01T00:00:00Z",
+        "finishedAt":"2026-01-01T00:00:00Z",
+        "durationMs":0
+      }
+    }"#;
+    std::fs::write(&trace, raw).expect("write trace");
+    let trace_arg = trace.to_string_lossy().to_string();
+
+    let normal = run_cli(&[
+        "ci".into(),
+        trace_arg.clone(),
+        "--flake-budget".into(),
+        "5".into(),
+        "--json".into(),
+    ]);
+    assert_eq!(normal.status.code(), Some(2), "normal mode should reject misconfig");
+
+    let strict = run_cli(&[
+        "--strict".into(),
+        "ci".into(),
+        trace_arg,
+        "--flake-budget".into(),
+        "5".into(),
+        "--json".into(),
+    ]);
+    assert_eq!(strict.status.code(), Some(2), "strict mode should reject misconfig");
+}
