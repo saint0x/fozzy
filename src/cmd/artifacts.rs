@@ -682,7 +682,9 @@ fn validate_required_bundle_files(files: &[PathBuf], run: &str) -> FozzyResult<(
         .iter()
         .filter_map(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
         .collect();
-    let required = ["trace.fozzy", "report.json", "events.json", "manifest.json"];
+    // Run-id exports must work for normal runs where trace/events are optional.
+    // The stable minimum contract is report + manifest.
+    let required = ["report.json", "manifest.json"];
     let missing: Vec<&str> = required
         .into_iter()
         .filter(|name| !present.contains(*name))
@@ -977,6 +979,26 @@ mod tests {
         let err_export = export_artifacts(&cfg, "r1", &out_export).expect_err("export must fail for incomplete run");
         assert!(err_export.to_string().contains("incomplete artifacts"));
         assert!(!out_export.exists(), "export zip should not be created on incomplete run");
+    }
+
+    #[test]
+    fn export_and_pack_allow_run_dirs_without_trace_or_events() {
+        let root = std::env::temp_dir().join(format!("fozzy-pack-minimal-run-{}", uuid::Uuid::new_v4()));
+        let run_dir = root.join(".fozzy").join("runs").join("r1");
+        std::fs::create_dir_all(&run_dir).expect("mkdir");
+        std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
+        std::fs::write(run_dir.join("manifest.json"), valid_manifest_json("r1")).expect("manifest");
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+        };
+        let out_pack = root.join("pack.zip");
+        let out_export = root.join("export.zip");
+
+        export_reproducer_pack(&cfg, "r1", &out_pack).expect("pack should succeed");
+        export_artifacts(&cfg, "r1", &out_export).expect("export should succeed");
+        assert!(out_pack.exists(), "pack zip should exist");
+        assert!(out_export.exists(), "export zip should exist");
     }
 
     #[test]

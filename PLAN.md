@@ -133,6 +133,7 @@ Fozzy is a deterministic full-stack testing platform built from first principles
 - ✅ Reproducer pack export added: `fozzy artifacts pack <run|trace> --out <dir|zip>` including trace/report/events + env/version/commandline metadata
 - ✅ `artifacts pack/export --out <dir>` and `corpus import --out <dir>` now preflight all targets so symlink-block failures are atomic (no partial outputs written)
 - ✅ `artifacts pack/export` now fail non-zero on incomplete run directories (required bundle files missing) instead of emitting partial bundles
+- ✅ Run-id `artifacts pack/export <run>` now honor normal run contracts without requiring `trace.fozzy`/`events.json` (minimum required: `report.json` + valid `manifest.json`)
 - ✅ `artifacts pack/export --out <dir>` now reject stale pre-existing unrelated files in output directories (prevents mixed old/new contamination)
 - ✅ `artifacts pack/export` now validate `manifest.json` schema+parse integrity and fail non-zero on corrupted manifest bytes
 - ✅ File-output mode (`--out <zip>`) now enforces symlink-safe output path traversal checks (including parent path components)
