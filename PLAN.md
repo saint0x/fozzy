@@ -24,6 +24,7 @@ Completed / working (v0.1)
   • Single Rust crate (`src/`), shipping a `fozzy` binary
   • CLI scaffold (init/test/run/replay/shrink/corpus/artifacts/report/doctor/env/version/usage)
   • Deterministic core (seeded RNG + virtual time + decision log)
+  • Test execution is Rust-native (no shell-out to Bun/Node/Jest/Mocha/etc)
   • Trace recording (.fozzy JSON) on failure or explicit `--record`
   • Deterministic replay from trace + basic artifacts (report.json, events.json, trace.fozzy)
   • Basic shrinking (step deletion shrink for scenario traces)
@@ -104,6 +105,11 @@ Everything is built on one runtime:
   • Record/replay engine
 
 All higher-level features are thin layers on top of this runtime.
+
+Production Constraint (Non-Negotiable)
+  • No shelling out to external test runners (Bun/Node/Jest/Mocha/etc) under the hood.
+  • `fozzy test`/`fozzy run`/`fozzy fuzz`/`fozzy explore` must execute via the Rust engine from first principles.
+  • SDKs may spawn the `fozzy` binary, but must never implement engine logic.
 
 ⸻
 
@@ -245,7 +251,7 @@ Assertions
 
 Deliverable
 
-fozzy test replaces Jest/Mocha for early adopters.
+`fozzy test` replaces Jest/Mocha for early adopters (without invoking them internally).
 
 ⸻
 
@@ -558,6 +564,7 @@ Everything else is secondary.
   • CLI stability > internal purity
   • Thin SDKs, fat engine
   • Fail loudly on nondeterminism
+  • First-principles engine execution: no “run another test runner” shortcuts
 
 ⸻
 
