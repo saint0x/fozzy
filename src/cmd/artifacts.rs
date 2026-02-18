@@ -149,7 +149,25 @@ fn artifacts_list(config: &Config, run: &str) -> FozzyResult<Vec<ArtifactEntry>>
         return Ok(out);
     }
 
+    if run_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("fozzy"))
+        && !run_path.exists()
+    {
+        return Err(crate::FozzyError::InvalidArgument(format!(
+            "trace path not found: {}",
+            run_path.display()
+        )));
+    }
+
     let artifacts_dir = resolve_artifacts_dir(config, run)?;
+    if !artifacts_dir.exists() {
+        return Err(crate::FozzyError::InvalidArgument(format!(
+            "run artifacts not found: {}",
+            artifacts_dir.display()
+        )));
+    }
     let mut out = Vec::new();
 
     push_if_exists(&mut out, ArtifactKind::Trace, artifacts_dir.join("trace.fozzy"))?;
@@ -396,22 +414,45 @@ fn export_artifacts_zip(files: &[PathBuf], out_zip: &Path) -> FozzyResult<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let file = File::create(out_zip)?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .unix_permissions(0o644);
-    let mut used_names: BTreeSet<String> = BTreeSet::new();
+    let file_name = out_zip
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("artifacts.zip");
+    let tmp_name = format!(".{file_name}.{}.{}.tmp", std::process::id(), uuid::Uuid::new_v4());
+    let tmp_path = out_zip
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(tmp_name);
 
-    for src in files {
-        let name = zip_entry_name_for_path(src, &mut used_names);
-        zip.start_file(name, options)?;
-        let bytes = std::fs::read(src)?;
-        zip.write_all(&bytes)?;
+    let write_result = (|| -> FozzyResult<()> {
+        let file = File::create(&tmp_path)?;
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        let mut used_names: BTreeSet<String> = BTreeSet::new();
+
+        for src in files {
+            let name = zip_entry_name_for_path(src, &mut used_names);
+            zip.start_file(name, options)?;
+            let bytes = std::fs::read(src)?;
+            zip.write_all(&bytes)?;
+        }
+
+        zip.finish()?;
+        Ok(())
+    })();
+
+    match write_result {
+        Ok(()) => {
+            std::fs::rename(&tmp_path, out_zip)?;
+            Ok(())
+        }
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(err)
+        }
     }
-
-    zip.finish()?;
-    Ok(())
 }
 
 fn zip_entry_name_for_path(path: &Path, used: &mut BTreeSet<String>) -> String {
@@ -485,5 +526,20 @@ mod tests {
         assert_ne!(a, b);
         assert!(a.ends_with(".json"));
         assert!(b.ends_with(".json"));
+    }
+
+    #[test]
+    fn export_missing_input_returns_error_and_does_not_create_zip() {
+        let root = std::env::temp_dir().join(format!("fozzy-artifacts-missing-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let out = root.join("missing-input.zip");
+
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+        };
+        let err = export_artifacts(&cfg, "does-not-exist-input.fozzy", &out).expect_err("must fail");
+        assert!(err.to_string().contains("not found"));
+        assert!(!out.exists(), "zip should not exist on failure");
     }
 }
