@@ -25,3 +25,6 @@ zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 dbg_macro = "forbid"
 todo = "forbid"
 unimplemented = "forbid"
+
+[lints.rust]
+warnings = "deny"
