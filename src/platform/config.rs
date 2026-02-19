@@ -28,7 +28,7 @@ pub struct Config {
     pub http_backend: crate::HttpBackend,
 
     /// Enable deterministic memory capability tracking by default.
-    #[serde(default)]
+    #[serde(default = "default_mem_track")]
     pub mem_track: bool,
 
     /// Optional deterministic memory ceiling (MB).
@@ -56,7 +56,7 @@ pub struct Config {
     pub mem_pressure_wave: Option<String>,
 
     /// Emit dedicated memory artifacts.
-    #[serde(default)]
+    #[serde(default = "default_mem_artifacts")]
     pub mem_artifacts: bool,
 }
 
@@ -80,6 +80,14 @@ fn default_http_backend() -> crate::HttpBackend {
     crate::HttpBackend::Scripted
 }
 
+fn default_mem_track() -> bool {
+    true
+}
+
+fn default_mem_artifacts() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -88,14 +96,14 @@ impl Default for Config {
             proc_backend: default_proc_backend(),
             fs_backend: default_fs_backend(),
             http_backend: default_http_backend(),
-            mem_track: false,
+            mem_track: default_mem_track(),
             mem_limit_mb: None,
             mem_fail_after: None,
             fail_on_leak: false,
             leak_budget: None,
             mem_fragmentation_seed: None,
             mem_pressure_wave: None,
-            mem_artifacts: false,
+            mem_artifacts: default_mem_artifacts(),
         }
     }
 }

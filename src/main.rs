@@ -641,8 +641,9 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             leak_budget,
             mem_artifacts,
         } => {
+            let _ = (*mem_track, *mem_artifacts);
             let memory = MemoryOptions {
-                track: *mem_track || config.mem_track,
+                track: true,
                 limit_mb: mem_limit_mb.or(config.mem_limit_mb),
                 fail_after_allocs: mem_fail_after.or(config.mem_fail_after),
                 fragmentation_seed: mem_fragmentation_seed.or(config.mem_fragmentation_seed),
@@ -651,7 +652,7 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
                     .or_else(|| config.mem_pressure_wave.clone()),
                 fail_on_leak: *fail_on_leak || config.fail_on_leak,
                 leak_budget_bytes: leak_budget.or(config.leak_budget),
-                artifacts: *mem_artifacts || config.mem_artifacts || *mem_track || config.mem_track,
+                artifacts: true,
             };
             let run = fozzy::run_tests(
                 config,
@@ -694,8 +695,9 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             leak_budget,
             mem_artifacts,
         } => {
+            let _ = (*mem_track, *mem_artifacts);
             let memory = MemoryOptions {
-                track: *mem_track || config.mem_track,
+                track: true,
                 limit_mb: mem_limit_mb.or(config.mem_limit_mb),
                 fail_after_allocs: mem_fail_after.or(config.mem_fail_after),
                 fragmentation_seed: mem_fragmentation_seed.or(config.mem_fragmentation_seed),
@@ -704,7 +706,7 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
                     .or_else(|| config.mem_pressure_wave.clone()),
                 fail_on_leak: *fail_on_leak || config.fail_on_leak,
                 leak_budget_bytes: leak_budget.or(config.leak_budget),
-                artifacts: *mem_artifacts || config.mem_artifacts || *mem_track || config.mem_track,
+                artifacts: true,
             };
             let run = fozzy::run_scenario(
                 config,
@@ -754,8 +756,9 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             leak_budget,
             mem_artifacts,
         } => {
+            let _ = (*mem_track, *mem_artifacts);
             let memory = MemoryOptions {
-                track: *mem_track || config.mem_track,
+                track: true,
                 limit_mb: mem_limit_mb.or(config.mem_limit_mb),
                 fail_after_allocs: mem_fail_after.or(config.mem_fail_after),
                 fragmentation_seed: mem_fragmentation_seed.or(config.mem_fragmentation_seed),
@@ -764,7 +767,7 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
                     .or_else(|| config.mem_pressure_wave.clone()),
                 fail_on_leak: *fail_on_leak || config.fail_on_leak,
                 leak_budget_bytes: leak_budget.or(config.leak_budget),
-                artifacts: *mem_artifacts || config.mem_artifacts || *mem_track || config.mem_track,
+                artifacts: true,
             };
             let target: FuzzTarget = target.parse()?;
             let run = fozzy::fuzz(
@@ -815,8 +818,9 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             leak_budget,
             mem_artifacts,
         } => {
+            let _ = (*mem_track, *mem_artifacts);
             let memory = MemoryOptions {
-                track: *mem_track || config.mem_track,
+                track: true,
                 limit_mb: mem_limit_mb.or(config.mem_limit_mb),
                 fail_after_allocs: mem_fail_after.or(config.mem_fail_after),
                 fragmentation_seed: mem_fragmentation_seed.or(config.mem_fragmentation_seed),
@@ -825,7 +829,7 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
                     .or_else(|| config.mem_pressure_wave.clone()),
                 fail_on_leak: *fail_on_leak || config.fail_on_leak,
                 leak_budget_bytes: leak_budget.or(config.leak_budget),
-                artifacts: *mem_artifacts || config.mem_artifacts || *mem_track || config.mem_track,
+                artifacts: true,
             };
             let run = fozzy::explore(
                 config,

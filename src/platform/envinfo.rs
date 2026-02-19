@@ -91,11 +91,7 @@ pub fn env_info(config: &crate::Config) -> EnvInfo {
     capabilities.insert(
         "memory".to_string(),
         CapabilityInfo {
-            backend: if config.mem_track {
-                "deterministic_allocator".to_string()
-            } else {
-                "disabled".to_string()
-            },
+            backend: "deterministic_allocator".to_string(),
             deterministic: true,
         },
     );

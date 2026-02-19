@@ -27,14 +27,14 @@ pub struct MemoryOptions {
 impl Default for MemoryOptions {
     fn default() -> Self {
         Self {
-            track: false,
+            track: true,
             limit_mb: None,
             fail_after_allocs: None,
             fail_on_leak: false,
             leak_budget_bytes: None,
             fragmentation_seed: None,
             pressure_wave: None,
-            artifacts: false,
+            artifacts: true,
         }
     }
 }
