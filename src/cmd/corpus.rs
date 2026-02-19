@@ -33,7 +33,7 @@ pub fn corpus_command(_config: &Config, command: &CorpusCommand) -> FozzyResult<
                         let msg = e.to_string();
                         FozzyError::Io(
                             e.into_io_error()
-                                .unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, msg)),
+                                .unwrap_or_else(|| std::io::Error::other(msg)),
                         )
                     })?;
                     if entry.file_type().is_file() {
@@ -113,7 +113,7 @@ fn export_zip(dir: &Path, out_zip: &Path) -> FozzyResult<()> {
                 let msg = e.to_string();
                 FozzyError::Io(
                     e.into_io_error()
-                        .unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, msg)),
+                        .unwrap_or_else(|| std::io::Error::other(msg)),
                 )
             })?;
             if !entry.file_type().is_file() {
@@ -336,12 +336,7 @@ fn find_eocd_offset(bytes: &[u8]) -> Option<usize> {
         return None;
     }
     let start = bytes.len().saturating_sub(22 + 65_535);
-    for i in (start..=bytes.len() - 22).rev() {
-        if bytes[i..].starts_with(&[0x50, 0x4b, 0x05, 0x06]) {
-            return Some(i);
-        }
-    }
-    None
+    (start..=bytes.len() - 22).rev().find(|&i| bytes[i..].starts_with(&[0x50, 0x4b, 0x05, 0x06]))
 }
 
 fn read_u16_le(bytes: &[u8], off: usize) -> FozzyResult<u16> {

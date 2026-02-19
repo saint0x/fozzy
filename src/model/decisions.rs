@@ -77,13 +77,17 @@ impl<'a> DecisionCursor<'a> {
         }
     }
 
-    pub fn next(&mut self) -> Option<&'a Decision> {
+    pub fn remaining(&self) -> usize {
+        self.decisions.len().saturating_sub(self.index)
+    }
+}
+
+impl<'a> Iterator for DecisionCursor<'a> {
+    type Item = &'a Decision;
+
+    fn next(&mut self) -> Option<Self::Item> {
         let d = self.decisions.get(self.index);
         self.index = self.index.saturating_add(1);
         d
-    }
-
-    pub fn remaining(&self) -> usize {
-        self.decisions.len().saturating_sub(self.index)
     }
 }

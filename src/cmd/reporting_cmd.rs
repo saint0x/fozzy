@@ -135,15 +135,14 @@ fn flaky_command(config: &Config, runs: &[String], flake_budget: Option<FlakeBud
     } else {
         ((total - dominant) / total) * 100.0
     };
-    if let Some(budget) = flake_budget {
-        if flake_rate_pct > budget.pct() {
+    if let Some(budget) = flake_budget
+        && flake_rate_pct > budget.pct() {
             return Err(FozzyError::Report(format!(
                 "flake budget exceeded: {:.2}% > {:.2}%",
                 flake_rate_pct,
                 budget.pct()
             )));
         }
-    }
     let out = FlakyReport {
         schema_version: "fozzy.flaky_report.v1".to_string(),
         run_count: runs.len(),
@@ -204,14 +203,12 @@ fn query_value(root: &serde_json::Value, expr: &str) -> FozzyResult<serde_json::
         match token {
             QueryToken::Field(name) => {
                 for v in &current {
-                    if let Some(arr) = v.as_array() {
-                        if let Ok(idx) = name.parse::<usize>() {
-                            if let Some(item) = arr.get(idx) {
+                    if let Some(arr) = v.as_array()
+                        && let Ok(idx) = name.parse::<usize>()
+                            && let Some(item) = arr.get(idx) {
                                 next.push(item);
                                 continue;
                             }
-                        }
-                    }
                     if let Some(field) = v.get(&name) {
                         next.push(field);
                     }
@@ -328,11 +325,10 @@ fn apply_query_aliases(expr: &str) -> String {
         if expr == *from {
             return (*to).to_string();
         }
-        if let Some(rest) = expr.strip_prefix(from) {
-            if rest.starts_with('.') || rest.starts_with('[') {
+        if let Some(rest) = expr.strip_prefix(from)
+            && (rest.starts_with('.') || rest.starts_with('[')) {
                 return format!("{to}{rest}");
             }
-        }
     }
     expr.to_string()
 }

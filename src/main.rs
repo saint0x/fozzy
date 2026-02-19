@@ -682,11 +682,10 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                 if !report.issues.is_empty() {
                     reasons.push(format!("{} issue(s)", report.issues.len()));
                 }
-                if let Some(signals) = &report.nondeterminism_signals {
-                    if !signals.is_empty() {
+                if let Some(signals) = &report.nondeterminism_signals
+                    && !signals.is_empty() {
                         reasons.push(format!("{} nondeterminism signal(s)", signals.len()));
                     }
-                }
                 if !reasons.is_empty() {
                     return Err(anyhow::anyhow!(
                         "strict mode: doctor reported {}",
@@ -786,7 +785,7 @@ fn print_error_and_exit(cli: &Cli, err: anyhow::Error) -> ExitCode {
             "code": "error",
             "message": msg,
         });
-        println!("{}", out.to_string());
+        println!("{}", out);
     } else {
         eprintln!("{msg}");
     }

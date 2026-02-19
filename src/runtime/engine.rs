@@ -306,12 +306,11 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
     let run_id = Uuid::new_v4().to_string();
 
     for p in scenario_paths {
-        if let Some(filter) = &opt.filter {
-            if !p.to_string_lossy().contains(filter) {
+        if let Some(filter) = &opt.filter
+            && !p.to_string_lossy().contains(filter) {
                 skipped += 1;
                 continue;
             }
-        }
 
         let run = match run_scenario_inner(
             config,
@@ -404,7 +403,7 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
 }
 
 fn write_test_traces(
-    record_base: &PathBuf,
+    record_base: &Path,
     runs: &[ScenarioRun],
     seed: u64,
     policy: RecordCollisionPolicy,
@@ -704,7 +703,7 @@ pub fn shrink_trace(
     let mut candidate = best.clone();
 
     // Delta-debugging style: try removing chunks of steps while keeping failure.
-    let mut chunk = (candidate.len().max(1) + 1) / 2;
+    let mut chunk = candidate.len().max(1).div_ceil(2);
     while chunk > 0 && Instant::now() < deadline && candidate.len() > 1 {
         let mut improved = false;
         let mut i = 0usize;
@@ -749,7 +748,7 @@ pub fn shrink_trace(
             if chunk == 1 {
                 break;
             }
-            chunk = (chunk + 1) / 2;
+            chunk = chunk.div_ceil(2);
         }
     }
 
@@ -837,15 +836,14 @@ pub fn doctor(config: &Config, opt: &DoctorOptions) -> FozzyResult<DoctorReport>
         });
     }
 
-    if opt.deep {
-        if std::env::var("RUST_BACKTRACE").is_ok() {
+    if opt.deep
+        && std::env::var("RUST_BACKTRACE").is_ok() {
             signals.push(NondeterminismSignal {
                 source: "env".to_string(),
                 detail: "RUST_BACKTRACE is set; ok, but note it can change stderr output"
                     .to_string(),
             });
         }
-    }
     let mut issues = issues;
     let determinism_audit = if opt.deep {
         if let Some(path) = opt.scenario.clone() {
@@ -950,6 +948,7 @@ struct ScenarioRun {
     scenario_embedded: ScenarioV1Steps,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_scenario_inner(
     _config: &Config,
     _mode: RunMode,
@@ -1000,6 +999,7 @@ fn run_scenario_inner(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_embedded_scenario_inner(
     scenario: ScenarioV1Steps,
     scenario_path: PathBuf,
@@ -1073,6 +1073,7 @@ fn timeout_reached(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_scenario_replay_inner(
     _config: &Config,
     _mode: RunMode,
@@ -1115,8 +1116,8 @@ fn run_scenario_replay_inner(
         while let Some(item) = scheduler.pop_next() {
             let idx = item.payload;
             let step_def = &scenario.steps[idx];
-            if let Some(dl) = deadline {
-                if Instant::now() > dl {
+            if let Some(dl) = deadline
+                && Instant::now() > dl {
                     ctx.findings.push(Finding {
                         kind: FindingKind::Hang,
                         title: "until".to_string(),
@@ -1129,7 +1130,6 @@ fn run_scenario_replay_inner(
                         scenario.clone(),
                     ));
                 }
-            }
 
             if step {
                 std::thread::sleep(Duration::from_millis(10));
@@ -1147,8 +1147,8 @@ fn run_scenario_replay_inner(
         }
     } else {
         for (idx, step_def) in scenario.steps.iter().enumerate() {
-            if let Some(dl) = deadline {
-                if Instant::now() > dl {
+            if let Some(dl) = deadline
+                && Instant::now() > dl {
                     ctx.findings.push(Finding {
                         kind: FindingKind::Hang,
                         title: "until".to_string(),
@@ -1161,7 +1161,6 @@ fn run_scenario_replay_inner(
                         scenario.clone(),
                     ));
                 }
-            }
 
             if step {
                 std::thread::sleep(Duration::from_millis(10));
@@ -1179,8 +1178,8 @@ fn run_scenario_replay_inner(
         }
     }
 
-    if let Some(cursor) = ctx.replay.as_ref() {
-        if cursor.remaining() > 0 {
+    if let Some(cursor) = ctx.replay.as_ref()
+        && cursor.remaining() > 0 {
             ctx.findings.push(Finding {
                 kind: FindingKind::Checker,
                 title: "replay_unused_decisions".to_string(),
@@ -1196,7 +1195,6 @@ fn run_scenario_replay_inner(
                 scenario.clone(),
             ));
         }
-    }
 
     Ok(ctx.finish(
         ExitStatus::Pass,
@@ -1970,8 +1968,8 @@ impl ExecCtx {
                     ]),
                 });
 
-                if let Some(expected) = expect_status {
-                    if status_code != *expected {
+                if let Some(expected) = expect_status
+                    && status_code != *expected {
                         return Err(Finding {
                             kind: FindingKind::Assertion,
                             title: "http_status".to_string(),
@@ -1979,10 +1977,9 @@ impl ExecCtx {
                             location: None,
                         });
                     }
-                }
 
-                if let Some(expected) = expect_body {
-                    if resp_body != *expected {
+                if let Some(expected) = expect_body
+                    && resp_body != *expected {
                         return Err(Finding {
                             kind: FindingKind::Assertion,
                             title: "http_body".to_string(),
@@ -1990,7 +1987,6 @@ impl ExecCtx {
                             location: None,
                         });
                     }
-                }
 
                 if let Some(expected) = expect_json {
                     let got: serde_json::Value =
@@ -2165,8 +2161,8 @@ impl ExecCtx {
                     ]),
                 });
 
-                if let Some(expected) = expect_exit {
-                    if rule.exit_code != *expected {
+                if let Some(expected) = expect_exit
+                    && rule.exit_code != *expected {
                         return Err(Finding {
                             kind: FindingKind::Assertion,
                             title: "proc_exit".to_string(),
@@ -2174,9 +2170,8 @@ impl ExecCtx {
                             location: None,
                         });
                     }
-                }
-                if let Some(expected) = expect_stdout {
-                    if &rule.stdout != expected {
+                if let Some(expected) = expect_stdout
+                    && &rule.stdout != expected {
                         return Err(Finding {
                             kind: FindingKind::Assertion,
                             title: "proc_stdout".to_string(),
@@ -2184,9 +2179,8 @@ impl ExecCtx {
                             location: None,
                         });
                     }
-                }
-                if let Some(expected) = expect_stderr {
-                    if &rule.stderr != expected {
+                if let Some(expected) = expect_stderr
+                    && &rule.stderr != expected {
                         return Err(Finding {
                             kind: FindingKind::Assertion,
                             title: "proc_stderr".to_string(),
@@ -2194,7 +2188,6 @@ impl ExecCtx {
                             location: None,
                         });
                     }
-                }
                 if let Some(key) = save_stdout_as {
                     self.kv.insert(key.clone(), rule.stdout.clone());
                 }
@@ -2312,8 +2305,8 @@ impl ExecCtx {
                 };
                 let msg = self.net_queue.remove(idx);
 
-                if let Some(Decision::NetDrop { message_id, .. }) = self.replay_peek() {
-                    if *message_id != msg.id {
+                if let Some(Decision::NetDrop { message_id, .. }) = self.replay_peek()
+                    && *message_id != msg.id {
                         return Err(Finding {
                             kind: FindingKind::Checker,
                             title: "replay_drift".to_string(),
@@ -2324,7 +2317,6 @@ impl ExecCtx {
                             location: None,
                         });
                     }
-                }
 
                 let should_drop = match self.replay_take_if(
                     |d| matches!(d, Decision::NetDrop { message_id, .. } if *message_id == msg.id),
@@ -2380,11 +2372,10 @@ impl ExecCtx {
             } => {
                 let inbox = self.net_inbox.entry(node.clone()).or_default();
                 let pos = inbox.iter().position(|m| {
-                    if let Some(f) = from {
-                        if &m.from != f {
+                    if let Some(f) = from
+                        && &m.from != f {
                             return false;
                         }
-                    }
                     m.payload == *payload
                 });
                 let Some(pos) = pos else {

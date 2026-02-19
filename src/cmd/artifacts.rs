@@ -61,7 +61,7 @@ pub struct ArtifactEntry {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ArtifactOutput {
     List { entries: Vec<ArtifactEntry> },
-    Diff { diff: ArtifactDiff },
+    Diff { diff: Box<ArtifactDiff> },
     Exported,
 }
 
@@ -138,7 +138,7 @@ pub fn artifacts_command(config: &Config, command: &ArtifactCommand) -> FozzyRes
             entries: artifacts_list(config, run)?,
         }),
         ArtifactCommand::Diff { left, right } => Ok(ArtifactOutput::Diff {
-            diff: artifacts_diff(config, left, right)?,
+            diff: Box::new(artifacts_diff(config, left, right)?),
         }),
         ArtifactCommand::Export { run, out } => {
             export_artifacts(config, run, out)?;

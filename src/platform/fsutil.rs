@@ -16,7 +16,7 @@ pub fn find_matching_files(patterns: &[String]) -> FozzyResult<Vec<PathBuf>> {
             let msg = e.to_string();
             FozzyError::Io(
                 e.into_io_error()
-                    .unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, msg)),
+                    .unwrap_or_else(|| std::io::Error::other(msg)),
             )
         })?;
         if !entry.file_type().is_file() {

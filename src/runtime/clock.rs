@@ -5,16 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct VirtualClock {
     now_ms: u64,
     frozen: bool,
 }
 
-impl Default for VirtualClock {
-    fn default() -> Self {
-        Self { now_ms: 0, frozen: false }
-    }
-}
 
 impl VirtualClock {
     pub fn now_ms(&self) -> u64 {

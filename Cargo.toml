@@ -23,9 +23,9 @@ walkdir = "2.5.0"
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 
 [lints.clippy]
-dbg_macro = "forbid"
-todo = "forbid"
-unimplemented = "forbid"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
 
 [lints.rust]
 warnings = "deny"

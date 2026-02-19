@@ -17,6 +17,8 @@ use crate::{
 
 use crate::{FozzyError, FozzyResult};
 
+type ExploreExecResult = (ExitStatus, Vec<Finding>, Vec<TraceEvent>, u64, Vec<crate::Decision>);
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScheduleStrategy {
@@ -268,7 +270,7 @@ pub fn shrink_explore_trace(
     let deadline = Instant::now() + budget;
 
     if opt.minimize == crate::ShrinkMinimize::Schedule || opt.minimize == crate::ShrinkMinimize::All {
-        let mut chunk = (candidate.len().max(1) + 1) / 2;
+        let mut chunk = candidate.len().max(1).div_ceil(2);
         while chunk > 0 && Instant::now() < deadline && candidate.len() > 1 {
             let mut improved = false;
             let mut i = 0usize;
@@ -295,7 +297,7 @@ pub fn shrink_explore_trace(
                 if chunk == 1 {
                     break;
                 }
-                chunk = (chunk + 1) / 2;
+                chunk = chunk.div_ceil(2);
             }
         }
         best_decisions = candidate;
@@ -304,7 +306,7 @@ pub fn shrink_explore_trace(
     let mut shrunk_scenario = explore.scenario.clone();
     if opt.minimize == crate::ShrinkMinimize::All {
         let mut steps = shrunk_scenario.steps.clone();
-        let mut chunk = (steps.len().max(1) + 1) / 2;
+        let mut chunk = steps.len().max(1).div_ceil(2);
         while chunk > 0 && Instant::now() < deadline && steps.len() > 1 {
             let mut improved = false;
             let mut i = 0usize;
@@ -340,7 +342,7 @@ pub fn shrink_explore_trace(
                 if chunk == 1 {
                     break;
                 }
-                chunk = (chunk + 1) / 2;
+                chunk = chunk.div_ceil(2);
             }
         }
         shrunk_scenario.steps = steps;
@@ -457,7 +459,7 @@ fn run_explore_inner(
     schedule: ScheduleStrategy,
     max_steps: Option<u64>,
     max_time: Option<Duration>,
-) -> FozzyResult<(ExitStatus, Vec<Finding>, Vec<TraceEvent>, u64, Vec<crate::Decision>)> {
+) -> FozzyResult<ExploreExecResult> {
     let mut rng = rng_from_seed(seed);
     let started = Instant::now();
     let deadline = max_time.map(|d| started + d);
@@ -499,8 +501,8 @@ fn run_explore_inner(
     }
 
     while delivered < step_budget {
-        if let Some(dl) = deadline {
-            if Instant::now() >= dl {
+        if let Some(dl) = deadline
+            && Instant::now() >= dl {
                 findings.push(Finding {
                     kind: FindingKind::Hang,
                     title: "timeout".to_string(),
@@ -509,7 +511,6 @@ fn run_explore_inner(
                 });
                 return Ok((ExitStatus::Timeout, findings, events, delivered, decisions));
             }
-        }
 
         let deliverable = deliverable_indices(&queue, &nodes, &net);
         if deliverable.is_empty() {
@@ -529,7 +530,7 @@ fn run_explore_inner(
             time_ms,
             name: "deliver".to_string(),
             fields: serde_json::Map::from_iter([
-                ("id".to_string(), serde_json::Value::Number((msg.id as u64).into())),
+                ("id".to_string(), serde_json::Value::Number(msg.id.into())),
                 ("from".to_string(), serde_json::Value::String(msg.from.clone())),
                 ("to".to_string(), serde_json::Value::String(msg.to.clone())),
                 ("kind".to_string(), serde_json::Value::String(msg.kind.clone())),
@@ -558,7 +559,7 @@ fn run_explore_replay_inner(
     seed: u64,
     schedule: ScheduleStrategy,
     decisions: &[crate::Decision],
-) -> FozzyResult<(ExitStatus, Vec<Finding>, Vec<TraceEvent>, u64, Vec<crate::Decision>)> {
+) -> FozzyResult<ExploreExecResult> {
     // Replay uses the recorded "deliver:<id>" sequence (encoded in Step name for v0.2).
     let mut rng = rng_from_seed(seed);
 
@@ -615,7 +616,7 @@ fn run_explore_replay_inner(
             time_ms,
             name: "deliver".to_string(),
             fields: serde_json::Map::from_iter([
-                ("id".to_string(), serde_json::Value::Number((msg.id as u64).into())),
+                ("id".to_string(), serde_json::Value::Number(msg.id.into())),
                 ("from".to_string(), serde_json::Value::String(msg.from.clone())),
                 ("to".to_string(), serde_json::Value::String(msg.to.clone())),
                 ("kind".to_string(), serde_json::Value::String(msg.kind.clone())),

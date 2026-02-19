@@ -19,6 +19,8 @@ use crate::{
 
 use crate::{FozzyError, FozzyResult};
 
+type LastExec = (Vec<u8>, Vec<TraceEvent>, ExitStatus, Vec<Finding>);
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FuzzMode {
@@ -130,15 +132,14 @@ pub fn fuzz(config: &Config, target: &FuzzTarget, opt: &FuzzOptions) -> FozzyRes
     let mut findings = Vec::new();
     let mut crash_trace_path: Option<PathBuf> = None;
     let mut crash_count = 0u64;
-    let mut last_exec: Option<(Vec<u8>, Vec<TraceEvent>, ExitStatus, Vec<Finding>)> = None;
+    let mut last_exec: Option<LastExec> = None;
 
     let mut executed = 0u64;
     while executed < max_runs {
-        if let Some(dl) = deadline {
-            if Instant::now() >= dl {
+        if let Some(dl) = deadline
+            && Instant::now() >= dl {
                 break;
             }
-        }
 
         let base = &corpus[(rng.next_u64() as usize) % corpus.len()];
         let mut input = base.clone();
@@ -263,8 +264,8 @@ pub fn fuzz(config: &Config, target: &FuzzTarget, opt: &FuzzOptions) -> FozzyRes
         serde_json::to_vec_pretty(&coverage_stats)?,
     )?;
 
-    if let Some(record_path) = &opt.record_trace_to {
-        if crash_trace_path.is_none() {
+    if let Some(record_path) = &opt.record_trace_to
+        && crash_trace_path.is_none() {
             let (input, events, exec_status, exec_findings) = last_exec
                 .unwrap_or_else(|| (Vec::new(), Vec::new(), ExitStatus::Pass, Vec::new()));
             let mut trace_summary = summary.clone();
@@ -275,7 +276,6 @@ pub fn fuzz(config: &Config, target: &FuzzTarget, opt: &FuzzOptions) -> FozzyRes
             let written = write_trace_with_policy(&trace, record_path, opt.record_collision)?;
             summary.identity.trace_path = Some(written.to_string_lossy().to_string());
         }
-    }
 
     Ok(crate::RunResult { summary })
 }
@@ -668,14 +668,14 @@ fn parse_bytes(input: &[u8], i: &mut usize) -> Option<Vec<u8>> {
 fn mutate_bytes(buf: &mut Vec<u8>, rng: &mut rand_chacha::ChaCha20Rng, max_len: usize) {
     let choice = (rng.next_u64() % 4) as u8;
     match choice {
-        0 => bitflip(buf, rng),
+        0 => bitflip(buf.as_mut_slice(), rng),
         1 => insert_byte(buf, rng, max_len),
         2 => delete_byte(buf, rng),
         _ => overwrite_byte(buf, rng),
     }
 }
 
-fn bitflip(buf: &mut Vec<u8>, rng: &mut rand_chacha::ChaCha20Rng) {
+fn bitflip(buf: &mut [u8], rng: &mut rand_chacha::ChaCha20Rng) {
     if buf.is_empty() {
         return;
     }
@@ -763,7 +763,7 @@ fn minimize_input(
     target_status: ExitStatus,
 ) -> FozzyResult<Vec<u8>> {
     let mut best = input.to_vec();
-    let mut chunk = (best.len().max(1) + 1) / 2;
+    let mut chunk = best.len().max(1).div_ceil(2);
     while chunk > 0 && best.len() > 1 {
         let mut improved = false;
         let mut i = 0usize;
@@ -792,7 +792,7 @@ fn minimize_input(
             if chunk == 1 {
                 break;
             }
-            chunk = (chunk + 1) / 2;
+            chunk = chunk.div_ceil(2);
         }
     }
     Ok(best)
@@ -820,7 +820,7 @@ fn rng_from_seed(seed: u64) -> ChaCha20Rng {
 
 fn hex_decode(s: &str) -> FozzyResult<Vec<u8>> {
     let s = s.trim();
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(FozzyError::Trace("invalid hex length".to_string()));
     }
     let mut out = Vec::with_capacity(s.len() / 2);
