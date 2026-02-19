@@ -18,9 +18,19 @@ Fozzy is built to catch high-cost bugs that normal unit/integration runs miss:
 
 Outcome: failures are reproducible, shrinkable, and diagnosable, so teams spend less time on “cannot reproduce” and more time fixing root cause.
 
+## Execution Scope
+
+Fozzy is a deterministic scenario engine, not a drop-in executor for arbitrary repo test commands.
+
+- `proc` is currently scripted (`proc_when` + `proc_spawn`), not host process execution.
+- `http` is currently scripted (`http_when` + `http_request`), not live outbound HTTP.
+- `fs` uses deterministic virtual overlay semantics.
+
+Use `fozzy env --json` to inspect active capability backends.
+
 ## Test Modes
 
-- `fozzy test`: scenario suite execution for normal CI pipelines.
+- `fozzy test`: scenario suite execution for normal CI pipelines (scenario files, not direct shell/cargo/jest command execution).
 - `fozzy run`: single-scenario deterministic debug loop.
 - `fozzy fuzz`: coverage/property fuzzing with trace capture and shrink.
 - `fozzy explore`: schedule/fault exploration for distributed scenarios.

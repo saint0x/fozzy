@@ -39,8 +39,8 @@ pub fn usage_doc() -> UsageDoc {
             },
             UsageItem {
                 command: "fozzy test".to_string(),
-                when: "Run a suite of scenarios as your normal CI test runner; turn on --det to make failures replayable.".to_string(),
-                how: "fozzy test --det --seed 1337 --record /tmp/test.fozzy; with multiple scenarios, traces are /tmp/test.1.fozzy, /tmp/test.2.fozzy, etc.".to_string(),
+                when: "Run a suite of Fozzy scenarios in CI; turn on --det to make failures replayable. This is not a direct shell/cargo/jest runner.".to_string(),
+                how: "fozzy test --det --seed 1337 --record /tmp/test.fozzy; with multiple scenarios, traces are /tmp/test.1.fozzy, /tmp/test.2.fozzy, etc. For process calls, define proc_when mocks before proc_spawn.".to_string(),
             },
             UsageItem {
                 command: "fozzy run".to_string(),

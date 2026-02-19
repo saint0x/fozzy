@@ -1555,7 +1555,10 @@ impl ExecCtx {
                     return Err(Finding {
                         kind: FindingKind::Assertion,
                         title: "proc_unmatched".to_string(),
-                        message: format!("no proc mock matched {cmd:?} {:?}", call_args),
+                        message: format!(
+                            "no proc mock matched {cmd:?} {:?}; proc backend is scripted. define a prior proc_when step for this command/args.",
+                            call_args
+                        ),
                         location: None,
                     });
                 };

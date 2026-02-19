@@ -66,6 +66,8 @@ fozzy test [globs...] [--det] [--seed <n>] [--jobs <n>] [--timeout <dur>] \
   [--record <path>] [--record-collision error|overwrite|append] [--fail-fast]
 ```
 
+`fozzy test` executes Fozzy scenario files. It does not directly launch arbitrary host test commands.
+
 ### `run`
 
 ```bash
