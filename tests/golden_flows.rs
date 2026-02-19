@@ -43,6 +43,12 @@ fn golden_run_record_replay_shrink_replay_min() {
         proc_backend: ProcBackend::Scripted,
         fs_backend: FsBackend::Virtual,
         http_backend: HttpBackend::Scripted,
+        mem_track: false,
+        mem_limit_mb: None,
+        mem_fail_after: None,
+        fail_on_leak: false,
+        leak_budget: None,
+        mem_artifacts: false,
     };
     let trace = ws.join("run.trace.fozzy");
     let run = run_scenario(
@@ -61,6 +67,7 @@ fn golden_run_record_replay_shrink_replay_min() {
             proc_backend: ProcBackend::Scripted,
             fs_backend: FsBackend::Virtual,
             http_backend: HttpBackend::Scripted,
+            memory: fozzy::MemoryOptions::default(),
         },
     )
     .expect("run");
@@ -122,6 +129,12 @@ fn golden_fuzz_record_replay_shrink_replay_min() {
         proc_backend: ProcBackend::Scripted,
         fs_backend: FsBackend::Virtual,
         http_backend: HttpBackend::Scripted,
+        mem_track: false,
+        mem_limit_mb: None,
+        mem_fail_after: None,
+        fail_on_leak: false,
+        leak_budget: None,
+        mem_artifacts: false,
     };
     let trace = ws.join("fuzz.trace.fozzy");
     let target: FuzzTarget = "fn:utf8".parse().expect("target parse");
@@ -143,6 +156,7 @@ fn golden_fuzz_record_replay_shrink_replay_min() {
             crash_only: false,
             minimize: false,
             record_collision: RecordCollisionPolicy::Overwrite,
+            memory: fozzy::MemoryOptions::default(),
         },
     )
     .expect("fuzz run");
@@ -207,6 +221,12 @@ fn golden_explore_record_replay_shrink_replay_min() {
         proc_backend: ProcBackend::Scripted,
         fs_backend: FsBackend::Virtual,
         http_backend: HttpBackend::Scripted,
+        mem_track: false,
+        mem_limit_mb: None,
+        mem_fail_after: None,
+        fail_on_leak: false,
+        leak_budget: None,
+        mem_artifacts: false,
     };
     let trace = ws.join("explore.trace.fozzy");
     let run = explore(
@@ -225,6 +245,7 @@ fn golden_explore_record_replay_shrink_replay_min() {
             minimize: false,
             reporter: Reporter::Json,
             record_collision: RecordCollisionPolicy::Overwrite,
+            memory: fozzy::MemoryOptions::default(),
         },
     )
     .expect("explore run");

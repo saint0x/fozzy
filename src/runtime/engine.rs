@@ -11,9 +11,10 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::{
-    Config, Decision, DecisionLog, ExitStatus, Finding, FindingKind, Reporter, RunIdentity,
-    RunMode, RunSummary, Scenario, ScenarioPath, ScenarioV1Steps, TraceEvent, TraceFile, TracePath,
-    wall_time_iso_utc, write_trace_with_policy,
+    Config, Decision, DecisionLog, ExitStatus, Finding, FindingKind, MemoryOptions,
+    MemoryRunReport, MemoryState, Reporter, RunIdentity, RunMode, RunSummary, Scenario,
+    ScenarioPath, ScenarioV1Steps, TraceEvent, TraceFile, TracePath, wall_time_iso_utc,
+    write_memory_artifacts, write_memory_delta_artifact, write_trace_with_policy,
 };
 
 use crate::{FozzyError, FozzyResult};
@@ -119,6 +120,7 @@ pub struct RunOptions {
     pub proc_backend: ProcBackend,
     pub fs_backend: FsBackend,
     pub http_backend: HttpBackend,
+    pub memory: MemoryOptions,
 }
 
 #[derive(Debug, Clone)]
@@ -307,10 +309,11 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
 
     for p in scenario_paths {
         if let Some(filter) = &opt.filter
-            && !p.to_string_lossy().contains(filter) {
-                skipped += 1;
-                continue;
-            }
+            && !p.to_string_lossy().contains(filter)
+        {
+            skipped += 1;
+            continue;
+        }
 
         let run = match run_scenario_inner(
             config,
@@ -322,6 +325,7 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
             opt.proc_backend,
             opt.fs_backend,
             opt.http_backend,
+            opt.memory.clone(),
         ) {
             Ok(run) => run,
             Err(FozzyError::Scenario(msg)) if msg.contains("use `fozzy explore`") => {
@@ -376,6 +380,7 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
             failed,
             skipped,
         }),
+        memory: None,
         findings,
     };
 
@@ -427,6 +432,7 @@ fn write_test_traces(
             finished_at: wall_time_iso_utc(),
             duration_ms: 0,
             tests: None,
+            memory: run.memory.as_ref().map(|m| m.summary.clone()),
             findings: run.findings.clone(),
         };
         let trace = TraceFile::new(
@@ -437,6 +443,8 @@ fn write_test_traces(
             run.events.clone(),
             summary,
         );
+        let mut trace = trace;
+        trace.memory = run.memory.as_ref().map(|m| m.to_trace());
         write_trace_with_policy(&trace, record_base, policy)?;
         return Ok(());
     }
@@ -471,6 +479,7 @@ fn write_test_traces(
             finished_at: wall_time_iso_utc(),
             duration_ms: 0,
             tests: None,
+            memory: run.memory.as_ref().map(|m| m.summary.clone()),
             findings: run.findings.clone(),
         };
         let trace = TraceFile::new(
@@ -481,6 +490,8 @@ fn write_test_traces(
             run.events.clone(),
             summary,
         );
+        let mut trace = trace;
+        trace.memory = run.memory.as_ref().map(|m| m.to_trace());
         write_trace_with_policy(&trace, &out, policy)?;
     }
     Ok(())
@@ -507,6 +518,7 @@ pub fn run_scenario(
         opt.proc_backend,
         opt.fs_backend,
         opt.http_backend,
+        opt.memory.clone(),
     )?;
     let finished_at = wall_time_iso_utc();
     let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
@@ -531,6 +543,7 @@ pub fn run_scenario(
         finished_at,
         duration_ms,
         tests: None,
+        memory: run.memory.as_ref().map(|m| m.summary.clone()),
         findings: run.findings.clone(),
     };
 
@@ -541,6 +554,11 @@ pub fn run_scenario(
         serde_json::to_vec_pretty(&run.events)?,
     )?;
     crate::write_timeline(&run.events, &artifacts_dir.join("timeline.json"))?;
+    if let Some(mem) = run.memory.as_ref()
+        && opt.memory.artifacts
+    {
+        write_memory_artifacts(mem, &artifacts_dir)?;
+    }
 
     if matches!(opt.reporter, Reporter::Junit) {
         std::fs::write(
@@ -569,6 +587,8 @@ pub fn run_scenario(
             run.events,
             report_summary.clone(),
         );
+        let mut trace = trace;
+        trace.memory = run.memory.as_ref().map(|m| m.to_trace());
         let written = write_trace_with_policy(&trace, &path, opt.record_collision)?;
         trace_path = Some(written);
     }
@@ -619,6 +639,11 @@ pub fn replay_trace(
         ProcBackend::Scripted,
         FsBackend::Virtual,
         HttpBackend::Scripted,
+        trace
+            .memory
+            .as_ref()
+            .map(|m| m.options.clone())
+            .unwrap_or_default(),
     )?;
 
     let finished_at = wall_time_iso_utc();
@@ -655,6 +680,7 @@ pub fn replay_trace(
         finished_at,
         duration_ms,
         tests: None,
+        memory: run.memory.as_ref().map(|m| m.summary.clone()),
         findings,
     };
 
@@ -666,6 +692,11 @@ pub fn replay_trace(
             serde_json::to_vec_pretty(&run.events)?,
         )?;
         crate::write_timeline(&run.events, &artifacts_dir.join("timeline.json"))?;
+    }
+    if let Some(mem) = run.memory.as_ref()
+        && mem.options.artifacts
+    {
+        write_memory_artifacts(mem, &artifacts_dir)?;
     }
 
     Ok(RunResult { summary })
@@ -734,6 +765,11 @@ pub fn shrink_trace(
                 ProcBackend::Scripted,
                 FsBackend::Virtual,
                 HttpBackend::Scripted,
+                trace
+                    .memory
+                    .as_ref()
+                    .map(|m| m.options.clone())
+                    .unwrap_or_default(),
             )?;
             if shrink_status_matches(target_status, res.status) {
                 candidate = trial;
@@ -774,6 +810,11 @@ pub fn shrink_trace(
         ProcBackend::Scripted,
         FsBackend::Virtual,
         HttpBackend::Scripted,
+        trace
+            .memory
+            .as_ref()
+            .map(|m| m.options.clone())
+            .unwrap_or_default(),
     )?;
 
     let run_id = Uuid::new_v4().to_string();
@@ -793,6 +834,7 @@ pub fn shrink_trace(
         finished_at,
         duration_ms: 0,
         tests: None,
+        memory: run.memory.as_ref().map(|m| m.summary.clone()),
         findings: run.findings.clone(),
     };
 
@@ -804,12 +846,29 @@ pub fn shrink_trace(
         run.events,
         summary.clone(),
     );
+    let mut trace_out = trace_out;
+    trace_out.memory = run.memory.as_ref().map(|m| m.to_trace());
     trace_out.write_json(&out_path).map_err(|err| {
         FozzyError::Trace(format!(
             "failed to write shrunk trace to {}: {err}",
             out_path.display()
         ))
     })?;
+    if let (Some(before), Some(after)) = (trace.memory.as_ref(), run.memory.as_ref()) {
+        let before_report = MemoryRunReport {
+            schema_version: "fozzy.memory_report.v1".to_string(),
+            options: before.options.clone(),
+            summary: before.summary.clone(),
+            leaks: before.leaks.clone(),
+            timeline: Vec::new(),
+            graph: crate::MemoryGraph::default(),
+        };
+        write_memory_delta_artifact(
+            &before_report,
+            after,
+            &out_path.with_extension("memory.delta.json"),
+        )?;
+    }
 
     Ok(ShrinkResult {
         out_trace_path: out_path.to_string_lossy().to_string(),
@@ -836,14 +895,12 @@ pub fn doctor(config: &Config, opt: &DoctorOptions) -> FozzyResult<DoctorReport>
         });
     }
 
-    if opt.deep
-        && std::env::var("RUST_BACKTRACE").is_ok() {
-            signals.push(NondeterminismSignal {
-                source: "env".to_string(),
-                detail: "RUST_BACKTRACE is set; ok, but note it can change stderr output"
-                    .to_string(),
-            });
-        }
+    if opt.deep && std::env::var("RUST_BACKTRACE").is_ok() {
+        signals.push(NondeterminismSignal {
+            source: "env".to_string(),
+            detail: "RUST_BACKTRACE is set; ok, but note it can change stderr output".to_string(),
+        });
+    }
     let mut issues = issues;
     let determinism_audit = if opt.deep {
         if let Some(path) = opt.scenario.clone() {
@@ -865,6 +922,7 @@ pub fn doctor(config: &Config, opt: &DoctorOptions) -> FozzyResult<DoctorReport>
                     ProcBackend::Scripted,
                     FsBackend::Virtual,
                     HttpBackend::Scripted,
+                    MemoryOptions::default(),
                 )?;
                 let sig = scenario_run_signature(&run);
                 if let Some(b) = &baseline {
@@ -924,6 +982,7 @@ pub fn doctor(config: &Config, opt: &DoctorOptions) -> FozzyResult<DoctorReport>
 fn scenario_run_signature(run: &ScenarioRun) -> String {
     let payload = serde_json::json!({
         "status": run.status,
+        "memory": run.memory,
         "findings": run.findings,
         "decisions": run.decisions.decisions,
         "events": run.events,
@@ -942,6 +1001,7 @@ fn gen_seed() -> u64 {
 struct ScenarioRun {
     status: ExitStatus,
     findings: Vec<Finding>,
+    memory: Option<MemoryRunReport>,
     decisions: DecisionLog,
     events: Vec<TraceEvent>,
     scenario_path: PathBuf,
@@ -959,6 +1019,7 @@ fn run_scenario_inner(
     proc_backend: ProcBackend,
     fs_backend: FsBackend,
     http_backend: HttpBackend,
+    memory: MemoryOptions,
 ) -> FozzyResult<ScenarioRun> {
     if det && matches!(proc_backend, ProcBackend::Host) {
         return Err(FozzyError::InvalidArgument(
@@ -996,6 +1057,7 @@ fn run_scenario_inner(
         proc_backend,
         fs_backend,
         http_backend,
+        memory,
     )
 }
 
@@ -1009,8 +1071,9 @@ fn run_embedded_scenario_inner(
     proc_backend: ProcBackend,
     fs_backend: FsBackend,
     http_backend: HttpBackend,
+    memory: MemoryOptions,
 ) -> FozzyResult<ScenarioRun> {
-    let mut ctx = ExecCtx::new(seed, det, proc_backend, fs_backend, http_backend);
+    let mut ctx = ExecCtx::new(seed, det, proc_backend, fs_backend, http_backend, memory);
     let started = Instant::now();
     let start_virtual_ms = ctx.clock.now_ms();
     let deadline = timeout.map(|t| started + t);
@@ -1086,6 +1149,7 @@ fn run_scenario_replay_inner(
     proc_backend: ProcBackend,
     fs_backend: FsBackend,
     http_backend: HttpBackend,
+    memory: MemoryOptions,
 ) -> FozzyResult<ScenarioRun> {
     if scenario.version != 1 {
         return Err(FozzyError::Scenario(format!(
@@ -1094,7 +1158,7 @@ fn run_scenario_replay_inner(
         )));
     }
 
-    let mut ctx = ExecCtx::new(seed, true, proc_backend, fs_backend, http_backend);
+    let mut ctx = ExecCtx::new(seed, true, proc_backend, fs_backend, http_backend, memory);
     if let Some(d) = decisions {
         ctx.replay = Some(ReplayCursor::new(d));
     }
@@ -1117,19 +1181,20 @@ fn run_scenario_replay_inner(
             let idx = item.payload;
             let step_def = &scenario.steps[idx];
             if let Some(dl) = deadline
-                && Instant::now() > dl {
-                    ctx.findings.push(Finding {
-                        kind: FindingKind::Hang,
-                        title: "until".to_string(),
-                        message: "replay stopped at --until budget".to_string(),
-                        location: None,
-                    });
-                    return Ok(ctx.finish(
-                        ExitStatus::Timeout,
-                        PathBuf::from(scenario_path),
-                        scenario.clone(),
-                    ));
-                }
+                && Instant::now() > dl
+            {
+                ctx.findings.push(Finding {
+                    kind: FindingKind::Hang,
+                    title: "until".to_string(),
+                    message: "replay stopped at --until budget".to_string(),
+                    location: None,
+                });
+                return Ok(ctx.finish(
+                    ExitStatus::Timeout,
+                    PathBuf::from(scenario_path),
+                    scenario.clone(),
+                ));
+            }
 
             if step {
                 std::thread::sleep(Duration::from_millis(10));
@@ -1148,19 +1213,20 @@ fn run_scenario_replay_inner(
     } else {
         for (idx, step_def) in scenario.steps.iter().enumerate() {
             if let Some(dl) = deadline
-                && Instant::now() > dl {
-                    ctx.findings.push(Finding {
-                        kind: FindingKind::Hang,
-                        title: "until".to_string(),
-                        message: "replay stopped at --until budget".to_string(),
-                        location: None,
-                    });
-                    return Ok(ctx.finish(
-                        ExitStatus::Timeout,
-                        PathBuf::from(scenario_path),
-                        scenario.clone(),
-                    ));
-                }
+                && Instant::now() > dl
+            {
+                ctx.findings.push(Finding {
+                    kind: FindingKind::Hang,
+                    title: "until".to_string(),
+                    message: "replay stopped at --until budget".to_string(),
+                    location: None,
+                });
+                return Ok(ctx.finish(
+                    ExitStatus::Timeout,
+                    PathBuf::from(scenario_path),
+                    scenario.clone(),
+                ));
+            }
 
             if step {
                 std::thread::sleep(Duration::from_millis(10));
@@ -1179,22 +1245,23 @@ fn run_scenario_replay_inner(
     }
 
     if let Some(cursor) = ctx.replay.as_ref()
-        && cursor.remaining() > 0 {
-            ctx.findings.push(Finding {
-                kind: FindingKind::Checker,
-                title: "replay_unused_decisions".to_string(),
-                message: format!(
-                    "replay finished with {} unused decisions",
-                    cursor.remaining()
-                ),
-                location: None,
-            });
-            return Ok(ctx.finish(
-                ExitStatus::Fail,
-                PathBuf::from(scenario_path),
-                scenario.clone(),
-            ));
-        }
+        && cursor.remaining() > 0
+    {
+        ctx.findings.push(Finding {
+            kind: FindingKind::Checker,
+            title: "replay_unused_decisions".to_string(),
+            message: format!(
+                "replay finished with {} unused decisions",
+                cursor.remaining()
+            ),
+            location: None,
+        });
+        return Ok(ctx.finish(
+            ExitStatus::Fail,
+            PathBuf::from(scenario_path),
+            scenario.clone(),
+        ));
+    }
 
     Ok(ctx.finish(
         ExitStatus::Pass,
@@ -1225,6 +1292,7 @@ struct ExecCtx {
     net_next_id: u64,
     net_drop_rate: f64,
     net_reorder: bool,
+    memory: MemoryState,
     decisions: DecisionLog,
     events: Vec<TraceEvent>,
     findings: Vec<Finding>,
@@ -1238,6 +1306,7 @@ impl ExecCtx {
         proc_backend: ProcBackend,
         fs_backend: FsBackend,
         http_backend: HttpBackend,
+        memory: MemoryOptions,
     ) -> Self {
         let seed_bytes = blake3::hash(&seed.to_le_bytes()).as_bytes().to_owned();
         let mut seed32 = [0u8; 32];
@@ -1264,6 +1333,7 @@ impl ExecCtx {
             net_next_id: 1,
             net_drop_rate: 0.0,
             net_reorder: false,
+            memory: MemoryState::new(memory),
             decisions: DecisionLog::default(),
             events: Vec::new(),
             findings: Vec::new(),
@@ -1272,14 +1342,53 @@ impl ExecCtx {
     }
 
     fn finish(
-        self,
-        status: ExitStatus,
+        mut self,
+        mut status: ExitStatus,
         scenario_path: PathBuf,
         embedded: ScenarioV1Steps,
     ) -> ScenarioRun {
+        let mut memory_report = None;
+        if self.memory.options.track {
+            let report = self.memory.finalize();
+            if report.summary.leaked_bytes > 0 {
+                self.findings.push(Finding {
+                    kind: FindingKind::Checker,
+                    title: "memory_leak".to_string(),
+                    message: format!(
+                        "detected {} leaked allocation(s), leaked_bytes={}",
+                        report.summary.leaked_allocs, report.summary.leaked_bytes
+                    ),
+                    location: None,
+                });
+            }
+            if let Some(budget) = report.options.leak_budget_bytes
+                && report.summary.leaked_bytes > budget
+            {
+                self.findings.push(Finding {
+                    kind: FindingKind::Checker,
+                    title: "memory_leak_budget".to_string(),
+                    message: format!(
+                        "leak budget exceeded: leaked_bytes={} budget_bytes={}",
+                        report.summary.leaked_bytes, budget
+                    ),
+                    location: None,
+                });
+                if status == ExitStatus::Pass {
+                    status = ExitStatus::Fail;
+                }
+            }
+            if report.options.fail_on_leak
+                && report.summary.leaked_bytes > 0
+                && status == ExitStatus::Pass
+            {
+                status = ExitStatus::Fail;
+            }
+            memory_report = Some(report);
+        }
         ScenarioRun {
             status,
             findings: self.findings,
+            memory: memory_report,
             decisions: self.decisions,
             events: self.events,
             scenario_path,
@@ -1969,24 +2078,26 @@ impl ExecCtx {
                 });
 
                 if let Some(expected) = expect_status
-                    && status_code != *expected {
-                        return Err(Finding {
-                            kind: FindingKind::Assertion,
-                            title: "http_status".to_string(),
-                            message: format!("expected status {expected}, got {}", status_code),
-                            location: None,
-                        });
-                    }
+                    && status_code != *expected
+                {
+                    return Err(Finding {
+                        kind: FindingKind::Assertion,
+                        title: "http_status".to_string(),
+                        message: format!("expected status {expected}, got {}", status_code),
+                        location: None,
+                    });
+                }
 
                 if let Some(expected) = expect_body
-                    && resp_body != *expected {
-                        return Err(Finding {
-                            kind: FindingKind::Assertion,
-                            title: "http_body".to_string(),
-                            message: "http response body mismatch".to_string(),
-                            location: None,
-                        });
-                    }
+                    && resp_body != *expected
+                {
+                    return Err(Finding {
+                        kind: FindingKind::Assertion,
+                        title: "http_body".to_string(),
+                        message: "http response body mismatch".to_string(),
+                        location: None,
+                    });
+                }
 
                 if let Some(expected) = expect_json {
                     let got: serde_json::Value =
@@ -2162,32 +2273,35 @@ impl ExecCtx {
                 });
 
                 if let Some(expected) = expect_exit
-                    && rule.exit_code != *expected {
-                        return Err(Finding {
-                            kind: FindingKind::Assertion,
-                            title: "proc_exit".to_string(),
-                            message: format!("expected exit {expected}, got {}", rule.exit_code),
-                            location: None,
-                        });
-                    }
+                    && rule.exit_code != *expected
+                {
+                    return Err(Finding {
+                        kind: FindingKind::Assertion,
+                        title: "proc_exit".to_string(),
+                        message: format!("expected exit {expected}, got {}", rule.exit_code),
+                        location: None,
+                    });
+                }
                 if let Some(expected) = expect_stdout
-                    && &rule.stdout != expected {
-                        return Err(Finding {
-                            kind: FindingKind::Assertion,
-                            title: "proc_stdout".to_string(),
-                            message: "proc stdout mismatch".to_string(),
-                            location: None,
-                        });
-                    }
+                    && &rule.stdout != expected
+                {
+                    return Err(Finding {
+                        kind: FindingKind::Assertion,
+                        title: "proc_stdout".to_string(),
+                        message: "proc stdout mismatch".to_string(),
+                        location: None,
+                    });
+                }
                 if let Some(expected) = expect_stderr
-                    && &rule.stderr != expected {
-                        return Err(Finding {
-                            kind: FindingKind::Assertion,
-                            title: "proc_stderr".to_string(),
-                            message: "proc stderr mismatch".to_string(),
-                            location: None,
-                        });
-                    }
+                    && &rule.stderr != expected
+                {
+                    return Err(Finding {
+                        kind: FindingKind::Assertion,
+                        title: "proc_stderr".to_string(),
+                        message: "proc stderr mismatch".to_string(),
+                        location: None,
+                    });
+                }
                 if let Some(key) = save_stdout_as {
                     self.kv.insert(key.clone(), rule.stdout.clone());
                 }
@@ -2306,17 +2420,18 @@ impl ExecCtx {
                 let msg = self.net_queue.remove(idx);
 
                 if let Some(Decision::NetDrop { message_id, .. }) = self.replay_peek()
-                    && *message_id != msg.id {
-                        return Err(Finding {
-                            kind: FindingKind::Checker,
-                            title: "replay_drift".to_string(),
-                            message: format!(
-                                "replay net drop drift: expected message id {}, got {}",
-                                msg.id, message_id
-                            ),
-                            location: None,
-                        });
-                    }
+                    && *message_id != msg.id
+                {
+                    return Err(Finding {
+                        kind: FindingKind::Checker,
+                        title: "replay_drift".to_string(),
+                        message: format!(
+                            "replay net drop drift: expected message id {}, got {}",
+                            msg.id, message_id
+                        ),
+                        location: None,
+                    });
+                }
 
                 let should_drop = match self.replay_take_if(
                     |d| matches!(d, Decision::NetDrop { message_id, .. } if *message_id == msg.id),
@@ -2373,9 +2488,10 @@ impl ExecCtx {
                 let inbox = self.net_inbox.entry(node.clone()).or_default();
                 let pos = inbox.iter().position(|m| {
                     if let Some(f) = from
-                        && &m.from != f {
-                            return false;
-                        }
+                        && &m.from != f
+                    {
+                        return false;
+                    }
                     m.payload == *payload
                 });
                 let Some(pos) = pos else {
@@ -2389,6 +2505,202 @@ impl ExecCtx {
                     });
                 };
                 inbox.remove(pos);
+                Ok(())
+            }
+
+            crate::Step::MemoryAlloc { bytes, key, tag } => {
+                let outcome = self.memory.allocate(
+                    *bytes,
+                    tag.clone(),
+                    "step:memory_alloc",
+                    self.clock.now_ms(),
+                );
+                self.decisions.push(Decision::MemoryAlloc {
+                    bytes: *bytes,
+                    alloc_id: outcome.alloc_id,
+                    callsite_hash: outcome.callsite_hash.clone(),
+                    failed_reason: outcome.failed_reason.clone(),
+                });
+                if let Some(cur) = self.replay.as_mut() {
+                    match cur.next() {
+                        Some(Decision::MemoryAlloc {
+                            bytes: expected_bytes,
+                            alloc_id: expected_alloc_id,
+                            failed_reason: expected_failed,
+                            ..
+                        }) if *expected_bytes == *bytes
+                            && *expected_alloc_id == outcome.alloc_id
+                            && *expected_failed == outcome.failed_reason => {}
+                        Some(other) => {
+                            return Err(Finding {
+                                kind: FindingKind::Checker,
+                                title: "replay_drift".to_string(),
+                                message: format!("expected MemoryAlloc({bytes}), got {other:?}"),
+                                location: None,
+                            });
+                        }
+                        None => {
+                            return Err(Finding {
+                                kind: FindingKind::Checker,
+                                title: "replay_drift".to_string(),
+                                message: "missing MemoryAlloc decision".to_string(),
+                                location: None,
+                            });
+                        }
+                    }
+                }
+                self.events.push(TraceEvent {
+                    time_ms: self.clock.now_ms(),
+                    name: "memory_alloc".to_string(),
+                    fields: serde_json::Map::from_iter([
+                        ("bytes".to_string(), serde_json::json!(bytes)),
+                        ("alloc_id".to_string(), serde_json::json!(outcome.alloc_id)),
+                        (
+                            "failed_reason".to_string(),
+                            serde_json::json!(outcome.failed_reason.clone()),
+                        ),
+                        (
+                            "callsite_hash".to_string(),
+                            serde_json::json!(outcome.callsite_hash.clone()),
+                        ),
+                    ]),
+                });
+                if let Some(id) = outcome.alloc_id
+                    && let Some(k) = key
+                {
+                    self.kv.insert(k.clone(), id.to_string());
+                }
+                if let Some(reason) = outcome.failed_reason {
+                    return Err(Finding {
+                        kind: FindingKind::Checker,
+                        title: "memory_alloc_failed".to_string(),
+                        message: format!("memory allocation failed: {reason}"),
+                        location: None,
+                    });
+                }
+                Ok(())
+            }
+
+            crate::Step::MemoryFree { alloc_id, key } => {
+                let id = if let Some(v) = alloc_id {
+                    *v
+                } else if let Some(k) = key {
+                    let Some(raw) = self.kv.get(k) else {
+                        return Err(Finding {
+                            kind: FindingKind::Checker,
+                            title: "memory_free".to_string(),
+                            message: format!("missing alloc id key {k:?}"),
+                            location: None,
+                        });
+                    };
+                    raw.parse::<u64>().map_err(|_| Finding {
+                        kind: FindingKind::Checker,
+                        title: "memory_free".to_string(),
+                        message: format!("alloc id key {k:?} is not a u64"),
+                        location: None,
+                    })?
+                } else {
+                    return Err(Finding {
+                        kind: FindingKind::Checker,
+                        title: "memory_free".to_string(),
+                        message: "set alloc_id or key".to_string(),
+                        location: None,
+                    });
+                };
+                let existed = self.memory.free(id, self.clock.now_ms());
+                self.decisions.push(Decision::MemoryFree {
+                    alloc_id: id,
+                    existed,
+                });
+                if let Some(cur) = self.replay.as_mut() {
+                    match cur.next() {
+                        Some(Decision::MemoryFree {
+                            alloc_id: expected_id,
+                            existed: expected_existed,
+                        }) if *expected_id == id && *expected_existed == existed => {}
+                        Some(other) => {
+                            return Err(Finding {
+                                kind: FindingKind::Checker,
+                                title: "replay_drift".to_string(),
+                                message: format!("expected MemoryFree({id}), got {other:?}"),
+                                location: None,
+                            });
+                        }
+                        None => {
+                            return Err(Finding {
+                                kind: FindingKind::Checker,
+                                title: "replay_drift".to_string(),
+                                message: "missing MemoryFree decision".to_string(),
+                                location: None,
+                            });
+                        }
+                    }
+                }
+                self.events.push(TraceEvent {
+                    time_ms: self.clock.now_ms(),
+                    name: "memory_free".to_string(),
+                    fields: serde_json::Map::from_iter([
+                        ("alloc_id".to_string(), serde_json::json!(id)),
+                        ("existed".to_string(), serde_json::json!(existed)),
+                    ]),
+                });
+                if !existed {
+                    return Err(Finding {
+                        kind: FindingKind::Checker,
+                        title: "memory_free_missing".to_string(),
+                        message: format!("allocation id {id} was not live"),
+                        location: None,
+                    });
+                }
+                Ok(())
+            }
+
+            crate::Step::MemoryLimitMb { mb } => {
+                self.memory.options.limit_mb = Some(*mb);
+                self.events.push(TraceEvent {
+                    time_ms: self.clock.now_ms(),
+                    name: "memory_limit_mb".to_string(),
+                    fields: serde_json::Map::from_iter([("mb".to_string(), serde_json::json!(mb))]),
+                });
+                Ok(())
+            }
+
+            crate::Step::MemoryFailAfterAllocs { count } => {
+                self.memory.options.fail_after_allocs = Some(*count);
+                self.events.push(TraceEvent {
+                    time_ms: self.clock.now_ms(),
+                    name: "memory_fail_after_allocs".to_string(),
+                    fields: serde_json::Map::from_iter([(
+                        "count".to_string(),
+                        serde_json::json!(count),
+                    )]),
+                });
+                Ok(())
+            }
+
+            crate::Step::MemoryCheckpoint { name } => {
+                self.memory.checkpoint(name, self.clock.now_ms());
+                self.events.push(TraceEvent {
+                    time_ms: self.clock.now_ms(),
+                    name: "memory_checkpoint".to_string(),
+                    fields: serde_json::Map::from_iter([(
+                        "name".to_string(),
+                        serde_json::json!(name),
+                    )]),
+                });
+                Ok(())
+            }
+
+            crate::Step::MemoryAssertInUseBytes { equals } => {
+                let got = self.memory.in_use_bytes();
+                if got != *equals {
+                    return Err(Finding {
+                        kind: FindingKind::Assertion,
+                        title: "memory_assert_in_use_bytes".to_string(),
+                        message: format!("expected in_use_bytes={equals}, got {got}"),
+                        location: None,
+                    });
+                }
                 Ok(())
             }
 

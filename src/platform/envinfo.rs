@@ -88,6 +88,17 @@ pub fn env_info(config: &crate::Config) -> EnvInfo {
             deterministic: matches!(config.proc_backend, crate::ProcBackend::Scripted),
         },
     );
+    capabilities.insert(
+        "memory".to_string(),
+        CapabilityInfo {
+            backend: if config.mem_track {
+                "deterministic_allocator".to_string()
+            } else {
+                "disabled".to_string()
+            },
+            deterministic: true,
+        },
+    );
 
     EnvInfo {
         os: std::env::consts::OS.to_string(),

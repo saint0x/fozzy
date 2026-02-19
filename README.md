@@ -24,6 +24,7 @@ Result: every failure can be recorded, replayed, minimized, and shared as a repr
 - Strict mode (`--strict`) to promote warning-like conditions to hard failures.
 - Atomic artifact writes and collision-safe recording policies.
 - Machine-readable JSON outputs across run, replay, report, and CI gating flows.
+- Deterministic memory correctness mode (`--mem-track`) with leak budgets and replayable memory artifacts.
 
 ## Runtime Backends
 

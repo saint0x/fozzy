@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "memory-leak",
+  "steps": [
+    { "type": "memory_alloc", "bytes": 256, "key": "leak", "tag": "leak-test" },
+    { "type": "memory_checkpoint", "name": "before_end" }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": "memory-pass",
+  "steps": [
+    { "type": "memory_limit_mb", "mb": 64 },
+    { "type": "memory_alloc", "bytes": 128, "key": "a", "tag": "setup" },
+    { "type": "memory_assert_in_use_bytes", "equals": 128 },
+    { "type": "memory_free", "key": "a" },
+    { "type": "memory_checkpoint", "name": "after_free" },
+    { "type": "memory_assert_in_use_bytes", "equals": 0 }
+  ]
+}

@@ -24,7 +24,9 @@ pub fn parse_duration(input: &str) -> FozzyResult<Duration> {
 
     let (num_part, unit_part) = split_num_unit(s)?;
     let value: u64 = num_part.parse().map_err(|_| {
-        FozzyError::InvalidArgument(format!("invalid duration number: {num_part} (from {input:?})"))
+        FozzyError::InvalidArgument(format!(
+            "invalid duration number: {num_part} (from {input:?})"
+        ))
     })?;
 
     let dur = match unit_part {
@@ -54,7 +56,9 @@ fn split_num_unit(s: &str) -> FozzyResult<(&str, &str)> {
     }
 
     if idx == 0 {
-        return Err(FozzyError::InvalidArgument(format!("invalid duration {s:?} (missing number)")));
+        return Err(FozzyError::InvalidArgument(format!(
+            "invalid duration {s:?} (missing number)"
+        )));
     }
 
     if idx >= s.len() {
@@ -78,4 +82,3 @@ mod tests {
         assert_eq!(parse_duration("2h").unwrap(), Duration::from_secs(7200));
     }
 }
-

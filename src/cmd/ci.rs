@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::{
-    artifacts_command, report_command, replay_trace, verify_trace_file, ArtifactCommand, Config, FlakeBudget,
-    FozzyError, FozzyResult, ReportCommand, ReplayOptions, Reporter, TraceFile, TracePath,
+    ArtifactCommand, Config, FlakeBudget, FozzyError, FozzyResult, ReplayOptions, ReportCommand,
+    Reporter, TraceFile, TracePath, artifacts_command, replay_trace, report_command,
+    verify_trace_file,
 };
 
 #[derive(Debug, Clone)]
@@ -39,7 +40,8 @@ pub fn ci_command(config: &Config, opt: &CiOptions) -> FozzyResult<CiReport> {
     let mut checks = Vec::new();
 
     let verify = verify_trace_file(&opt.trace)?;
-    let strict_integrity_ok = verify.checksum_present && verify.checksum_valid && verify.warnings.is_empty();
+    let strict_integrity_ok =
+        verify.checksum_present && verify.checksum_valid && verify.warnings.is_empty();
     checks.push(CiCheck {
         name: "trace_verify".to_string(),
         ok: verify.ok && (!opt.strict || strict_integrity_ok),
@@ -81,8 +83,29 @@ pub fn ci_command(config: &Config, opt: &CiOptions) -> FozzyResult<CiReport> {
         ok: expected == got,
         detail: Some(format!("expected={expected} got={got}")),
     });
+    if let Some(memory) = trace.memory.as_ref() {
+        let leak_ok = if memory.options.fail_on_leak {
+            memory.summary.leaked_bytes == 0
+        } else if let Some(budget) = memory.options.leak_budget_bytes {
+            memory.summary.leaked_bytes <= budget
+        } else {
+            true
+        };
+        checks.push(CiCheck {
+            name: "memory_policy".to_string(),
+            ok: leak_ok,
+            detail: Some(format!(
+                "leaked_bytes={} leaked_allocs={} fail_on_leak={} leak_budget_bytes={:?}",
+                memory.summary.leaked_bytes,
+                memory.summary.leaked_allocs,
+                memory.options.fail_on_leak,
+                memory.options.leak_budget_bytes
+            )),
+        });
+    }
 
-    let zip_path = std::env::temp_dir().join(format!("fozzy-ci-export-{}.zip", uuid::Uuid::new_v4()));
+    let zip_path =
+        std::env::temp_dir().join(format!("fozzy-ci-export-{}.zip", uuid::Uuid::new_v4()));
     artifacts_command(
         config,
         &ArtifactCommand::Export {
@@ -94,7 +117,9 @@ pub fn ci_command(config: &Config, opt: &CiOptions) -> FozzyResult<CiReport> {
         let file = std::fs::File::open(&zip_path)?;
         let mut zip = zip::ZipArchive::new(file).map_err(|e| FozzyError::Zip(e.to_string()))?;
         for i in 0..zip.len() {
-            let mut entry = zip.by_index(i).map_err(|e| FozzyError::Zip(e.to_string()))?;
+            let mut entry = zip
+                .by_index(i)
+                .map_err(|e| FozzyError::Zip(e.to_string()))?;
             if entry.is_dir() {
                 continue;
             }
@@ -183,6 +208,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let out = ci_command(
@@ -198,12 +229,17 @@ mod tests {
         assert!(out.ok);
         assert!(out.checks.iter().any(|c| c.name == "trace_verify"));
         assert!(out.checks.iter().any(|c| c.name == "replay_outcome_class"));
-        assert!(out.checks.iter().any(|c| c.name == "artifacts_zip_integrity"));
+        assert!(
+            out.checks
+                .iter()
+                .any(|c| c.name == "artifacts_zip_integrity")
+        );
     }
 
     #[test]
     fn ci_rejects_budget_without_flake_runs() {
-        let root = std::env::temp_dir().join(format!("fozzy-ci-cmd-budget-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-ci-cmd-budget-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("mkdir");
         let trace = root.join("trace.fozzy");
         let raw = r#"{
@@ -231,6 +267,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let err = ci_command(

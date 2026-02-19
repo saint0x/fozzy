@@ -33,7 +33,25 @@ export interface RunSummary {
   finishedAt: string;
   durationMs: number;
   tests?: { passed: number; failed: number; skipped: number };
+  memory?: {
+    allocCount: number;
+    freeCount: number;
+    failedAllocCount: number;
+    inUseBytes: number;
+    peakBytes: number;
+    leakedBytes: number;
+    leakedAllocs: number;
+  };
   findings?: Array<{ kind: string; title: string; message: string }>;
+}
+
+export interface MemoryOptions {
+  memTrack?: boolean;
+  memLimitMb?: number;
+  memFailAfter?: number;
+  failOnLeak?: boolean;
+  leakBudget?: number;
+  memArtifacts?: boolean;
 }
 
 export interface ExecResult {
@@ -53,7 +71,7 @@ export interface ExecIO {
   onStderr?: (chunk: string) => void;
 }
 
-export interface TestOptions {
+export interface TestOptions extends MemoryOptions {
   globs?: string[];
   det?: boolean;
   seed?: number;
@@ -65,7 +83,7 @@ export interface TestOptions {
   failFast?: boolean;
 }
 
-export interface RunOptions {
+export interface RunOptions extends MemoryOptions {
   det?: boolean;
   seed?: number;
   timeout?: Duration;
@@ -87,10 +105,16 @@ export interface FuzzOptions {
   reporter?: Reporter;
   crashOnly?: boolean;
   minimize?: boolean;
+  memTrack?: boolean;
+  memLimitMb?: number;
+  memFailAfter?: number;
+  failOnLeak?: boolean;
+  leakBudget?: number;
+  memArtifacts?: boolean;
 }
 
 export type Schedule = "fifo" | "bfs" | "dfs" | "random" | "pct" | "coverage_guided";
-export interface ExploreOptions {
+export interface ExploreOptions extends MemoryOptions {
   seed?: number;
   time?: Duration;
   steps?: number;
@@ -225,6 +249,7 @@ export class Fozzy {
     kv(args, "--reporter", opts.reporter);
     kv(args, "--record", opts.record);
     flag(args, opts.failFast, "--fail-fast");
+    appendMemoryArgs(args, opts);
     return await this.execRun(args);
   }
 
@@ -235,6 +260,7 @@ export class Fozzy {
     kv(args, "--timeout", opts.timeout);
     kv(args, "--reporter", opts.reporter);
     kv(args, "--record", opts.record);
+    appendMemoryArgs(args, opts);
     return await this.execRun(args);
   }
 
@@ -252,6 +278,7 @@ export class Fozzy {
     kv(args, "--reporter", opts.reporter);
     flag(args, opts.crashOnly, "--crash-only");
     flag(args, opts.minimize, "--minimize");
+    appendMemoryArgs(args, opts);
     return await this.execRun(args);
   }
 
@@ -268,6 +295,7 @@ export class Fozzy {
     flag(args, opts.shrink, "--shrink");
     flag(args, opts.minimize, "--minimize");
     kv(args, "--reporter", opts.reporter);
+    appendMemoryArgs(args, opts);
     return await this.execRun(args);
   }
 
@@ -393,6 +421,15 @@ function kv(args: string[], key: string, value: unknown): void {
 
 function flag(args: string[], enabled: unknown, key: string): void {
   if (enabled) args.push(key);
+}
+
+function appendMemoryArgs(args: string[], opts: MemoryOptions): void {
+  flag(args, opts.memTrack, "--mem-track");
+  kv(args, "--mem-limit-mb", opts.memLimitMb);
+  kv(args, "--mem-fail-after", opts.memFailAfter);
+  flag(args, opts.failOnLeak, "--fail-on-leak");
+  kv(args, "--leak-budget", opts.leakBudget);
+  flag(args, opts.memArtifacts, "--mem-artifacts");
 }
 
 function parseJson(s: string): unknown {

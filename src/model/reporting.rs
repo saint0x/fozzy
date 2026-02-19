@@ -133,6 +133,8 @@ pub struct RunSummary {
     pub duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tests: Option<TestCounts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<crate::MemorySummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
 }
@@ -166,8 +168,23 @@ impl RunSummary {
                 tests.passed, tests.failed, tests.skipped
             ));
         }
+        if let Some(mem) = &self.memory {
+            out.push_str(&format!(
+                "memory: allocs={} frees={} failed_allocs={} in_use={} peak={} leaked_bytes={} leaked_allocs={}\n",
+                mem.alloc_count,
+                mem.free_count,
+                mem.failed_alloc_count,
+                mem.in_use_bytes,
+                mem.peak_bytes,
+                mem.leaked_bytes,
+                mem.leaked_allocs
+            ));
+        }
         for finding in &self.findings {
-            out.push_str(&format!("- {:?}: {}: {}\n", finding.kind, finding.title, finding.message));
+            out.push_str(&format!(
+                "- {:?}: {}: {}\n",
+                finding.kind, finding.title, finding.message
+            ));
         }
         out.trim_end().to_string()
     }
@@ -208,9 +225,18 @@ pub struct RunManifest {
     pub tests_failed: Option<u64>,
     #[serde(rename = "testsSkipped", skip_serializing_if = "Option::is_none")]
     pub tests_skipped: Option<u64>,
+    #[serde(rename = "memoryLeakedBytes", skip_serializing_if = "Option::is_none")]
+    pub memory_leaked_bytes: Option<u64>,
+    #[serde(rename = "memoryLeakedAllocs", skip_serializing_if = "Option::is_none")]
+    pub memory_leaked_allocs: Option<u64>,
+    #[serde(rename = "memoryPeakBytes", skip_serializing_if = "Option::is_none")]
+    pub memory_peak_bytes: Option<u64>,
 }
 
-pub fn write_run_manifest(summary: &RunSummary, artifacts_dir: &Path) -> crate::FozzyResult<PathBuf> {
+pub fn write_run_manifest(
+    summary: &RunSummary,
+    artifacts_dir: &Path,
+) -> crate::FozzyResult<PathBuf> {
     std::fs::create_dir_all(artifacts_dir)?;
     let manifest = RunManifest {
         schema_version: "fozzy.run_manifest.v1".to_string(),
@@ -228,6 +254,9 @@ pub fn write_run_manifest(summary: &RunSummary, artifacts_dir: &Path) -> crate::
         tests_passed: summary.tests.as_ref().map(|t| t.passed),
         tests_failed: summary.tests.as_ref().map(|t| t.failed),
         tests_skipped: summary.tests.as_ref().map(|t| t.skipped),
+        memory_leaked_bytes: summary.memory.as_ref().map(|m| m.leaked_bytes),
+        memory_leaked_allocs: summary.memory.as_ref().map(|m| m.leaked_allocs),
+        memory_peak_bytes: summary.memory.as_ref().map(|m| m.peak_bytes),
     };
     let out = artifacts_dir.join("manifest.json");
     std::fs::write(&out, serde_json::to_vec_pretty(&manifest)?)?;
@@ -240,7 +269,12 @@ pub fn render_junit_xml(summary: &RunSummary) -> String {
     let failures = summary
         .findings
         .iter()
-        .filter(|f| matches!(f.kind, FindingKind::Assertion | FindingKind::Invariant | FindingKind::Checker))
+        .filter(|f| {
+            matches!(
+                f.kind,
+                FindingKind::Assertion | FindingKind::Invariant | FindingKind::Checker
+            )
+        })
         .count();
 
     let mut out = String::new();
@@ -285,7 +319,10 @@ pub fn render_html(summary: &RunSummary) -> String {
     let mut items = String::new();
     for f in &summary.findings {
         items.push_str("<li>");
-        items.push_str(&html_escape(&format!("{:?}: {}: {}", f.kind, f.title, f.message)));
+        items.push_str(&html_escape(&format!(
+            "{:?}: {}: {}",
+            f.kind, f.title, f.message
+        )));
         items.push_str("</li>");
     }
     if summary.findings.is_empty() {
@@ -324,7 +361,11 @@ pub fn render_html(summary: &RunSummary) -> String {
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('\"', "&quot;").replace('\'', "&apos;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn html_escape(s: &str) -> String {

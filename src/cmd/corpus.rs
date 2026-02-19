@@ -12,15 +12,28 @@ use crate::{Config, FozzyError, FozzyResult};
 
 #[derive(Debug, Subcommand)]
 pub enum CorpusCommand {
-    List { dir: PathBuf },
-    Add { dir: PathBuf, file: PathBuf },
+    List {
+        dir: PathBuf,
+    },
+    Add {
+        dir: PathBuf,
+        file: PathBuf,
+    },
     Minimize {
         dir: PathBuf,
         #[arg(long)]
         budget: Option<crate::FozzyDuration>,
     },
-    Export { dir: PathBuf, #[arg(long)] out: PathBuf },
-    Import { zip: PathBuf, #[arg(long)] out: PathBuf },
+    Export {
+        dir: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    Import {
+        zip: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 pub fn corpus_command(_config: &Config, command: &CorpusCommand) -> FozzyResult<serde_json::Value> {
@@ -94,7 +107,11 @@ fn export_zip(dir: &Path, out_zip: &Path) -> FozzyResult<()> {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("corpus.zip");
-    let tmp_name = format!(".{file_name}.{}.{}.tmp", std::process::id(), uuid::Uuid::new_v4());
+    let tmp_name = format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    );
     let tmp_path = out_zip
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -210,10 +227,13 @@ fn import_zip(zip_path: &Path, out_dir: &Path) -> FozzyResult<()> {
     validate_zip_archive_raw_entries(zip_path)?;
 
     let file = File::open(zip_path)?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|e| FozzyError::InvalidArgument(format!("invalid zip: {e}")))?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| FozzyError::InvalidArgument(format!("invalid zip: {e}")))?;
     let mut seen_targets = HashSet::new();
     for i in 0..zip.len() {
-        let f = zip.by_index(i).map_err(|e| FozzyError::InvalidArgument(format!("zip read error: {e}")))?;
+        let f = zip
+            .by_index(i)
+            .map_err(|e| FozzyError::InvalidArgument(format!("zip read error: {e}")))?;
         if f.is_dir() {
             continue;
         }
@@ -223,9 +243,12 @@ fn import_zip(zip_path: &Path, out_dir: &Path) -> FozzyResult<()> {
     }
 
     let file = File::open(zip_path)?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|e| FozzyError::InvalidArgument(format!("invalid zip: {e}")))?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| FozzyError::InvalidArgument(format!("invalid zip: {e}")))?;
     for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(|e| FozzyError::InvalidArgument(format!("zip read error: {e}")))?;
+        let mut f = zip
+            .by_index(i)
+            .map_err(|e| FozzyError::InvalidArgument(format!("zip read error: {e}")))?;
         if f.is_dir() {
             continue;
         }
@@ -272,7 +295,9 @@ fn parse_zip_central_directory_names(bytes: &[u8]) -> FozzyResult<Vec<Vec<u8>>> 
     const ZIP64_U32_MAX: u32 = 0xFFFF_FFFF;
 
     let Some(eocd) = find_eocd_offset(bytes) else {
-        return Err(FozzyError::InvalidArgument("invalid zip: missing end-of-central-directory".to_string()));
+        return Err(FozzyError::InvalidArgument(
+            "invalid zip: missing end-of-central-directory".to_string(),
+        ));
     };
     let total_entries = read_u16_le(bytes, eocd + 10)?;
     let cd_size = read_u32_le(bytes, eocd + 12)?;
@@ -286,9 +311,9 @@ fn parse_zip_central_directory_names(bytes: &[u8]) -> FozzyResult<Vec<Vec<u8>>> 
     let total_entries = total_entries as usize;
     let cd_offset = cd_offset as usize;
     let cd_size = cd_size as usize;
-    let cd_end = cd_offset
-        .checked_add(cd_size)
-        .ok_or_else(|| FozzyError::InvalidArgument("invalid zip: central directory overflow".to_string()))?;
+    let cd_end = cd_offset.checked_add(cd_size).ok_or_else(|| {
+        FozzyError::InvalidArgument("invalid zip: central directory overflow".to_string())
+    })?;
     if cd_end > bytes.len() {
         return Err(FozzyError::InvalidArgument(
             "invalid zip: central directory out of bounds".to_string(),
@@ -313,9 +338,9 @@ fn parse_zip_central_directory_names(bytes: &[u8]) -> FozzyResult<Vec<Vec<u8>>> 
         let extra_len = read_u16_le(bytes, pos + 30)? as usize;
         let comment_len = read_u16_le(bytes, pos + 32)? as usize;
         let name_start = pos + 46;
-        let name_end = name_start
-            .checked_add(name_len)
-            .ok_or_else(|| FozzyError::InvalidArgument("invalid zip: filename length overflow".to_string()))?;
+        let name_end = name_start.checked_add(name_len).ok_or_else(|| {
+            FozzyError::InvalidArgument("invalid zip: filename length overflow".to_string())
+        })?;
         if name_end > cd_end {
             return Err(FozzyError::InvalidArgument(
                 "invalid zip: filename out of bounds".to_string(),
@@ -325,7 +350,9 @@ fn parse_zip_central_directory_names(bytes: &[u8]) -> FozzyResult<Vec<Vec<u8>>> 
         pos = name_end
             .checked_add(extra_len)
             .and_then(|p| p.checked_add(comment_len))
-            .ok_or_else(|| FozzyError::InvalidArgument("invalid zip: central directory overflow".to_string()))?;
+            .ok_or_else(|| {
+                FozzyError::InvalidArgument("invalid zip: central directory overflow".to_string())
+            })?;
     }
 
     Ok(names)
@@ -336,19 +363,25 @@ fn find_eocd_offset(bytes: &[u8]) -> Option<usize> {
         return None;
     }
     let start = bytes.len().saturating_sub(22 + 65_535);
-    (start..=bytes.len() - 22).rev().find(|&i| bytes[i..].starts_with(&[0x50, 0x4b, 0x05, 0x06]))
+    (start..=bytes.len() - 22)
+        .rev()
+        .find(|&i| bytes[i..].starts_with(&[0x50, 0x4b, 0x05, 0x06]))
 }
 
 fn read_u16_le(bytes: &[u8], off: usize) -> FozzyResult<u16> {
     if off + 2 > bytes.len() {
-        return Err(FozzyError::InvalidArgument("invalid zip: truncated data".to_string()));
+        return Err(FozzyError::InvalidArgument(
+            "invalid zip: truncated data".to_string(),
+        ));
     }
     Ok(u16::from_le_bytes([bytes[off], bytes[off + 1]]))
 }
 
 fn read_u32_le(bytes: &[u8], off: usize) -> FozzyResult<u32> {
     if off + 4 > bytes.len() {
-        return Err(FozzyError::InvalidArgument("invalid zip: truncated data".to_string()));
+        return Err(FozzyError::InvalidArgument(
+            "invalid zip: truncated data".to_string(),
+        ));
     }
     Ok(u32::from_le_bytes([
         bytes[off],
@@ -421,7 +454,11 @@ fn write_zip_entry_secure(out_dir: &Path, entry_name: &str, bytes: &[u8]) -> Foz
     Ok(())
 }
 
-fn validate_zip_target_secure(out_dir: &Path, rel: &Path, seen_targets: &mut HashSet<String>) -> FozzyResult<()> {
+fn validate_zip_target_secure(
+    out_dir: &Path,
+    rel: &Path,
+    seen_targets: &mut HashSet<String>,
+) -> FozzyResult<()> {
     let key = portable_rel_key(rel);
     if !seen_targets.insert(key) {
         return Err(FozzyError::InvalidArgument(format!(
@@ -509,7 +546,9 @@ fn normalize_zip_entry_rel_path(name: &str) -> FozzyResult<PathBuf> {
         match comp {
             Component::Normal(seg) => {
                 let seg = seg.to_str().ok_or_else(|| {
-                    FozzyError::InvalidArgument(format!("unsafe archive entry path rejected: {name}"))
+                    FozzyError::InvalidArgument(format!(
+                        "unsafe archive entry path rejected: {name}"
+                    ))
                 })?;
                 validate_archive_path_segment(seg, name)?;
                 rel.push(seg);
@@ -558,7 +597,10 @@ fn validate_archive_path_segment(seg: &str, original_name: &str) -> FozzyResult<
         )));
     }
 
-    if seg.chars().any(|c| c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|')) {
+    if seg
+        .chars()
+        .any(|c| c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+    {
         return Err(FozzyError::InvalidArgument(format!(
             "unsafe archive entry path rejected: {original_name}"
         )));
@@ -693,7 +735,8 @@ mod tests {
     fn import_rejects_symlink_target_overwrite() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-symlink-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-corpus-symlink-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("root");
         let zip_path = root.join("in.zip");
 
@@ -751,8 +794,14 @@ mod tests {
         let err = import_zip(&zip_path, &out).expect_err("must fail");
         assert!(err.to_string().contains("symlinked output file"));
         assert_eq!(std::fs::read(&victim).expect("victim read"), b"safe");
-        assert!(!out.join("good-1.bin").exists(), "good-1 should not be written");
-        assert!(!out.join("good-2.bin").exists(), "good-2 should not be written");
+        assert!(
+            !out.join("good-1.bin").exists(),
+            "good-1 should not be written"
+        );
+        assert!(
+            !out.join("good-2.bin").exists(),
+            "good-2 should not be written"
+        );
     }
 
     #[test]
@@ -764,8 +813,12 @@ mod tests {
             r"\\server\share\evil_unc.bin",
             "//server/share/evil_unc.bin",
         ] {
-            let err = normalize_zip_entry_rel_path(bad).expect_err("must reject windows-style unsafe path");
-            assert!(err.to_string().contains("unsafe archive entry path rejected"));
+            let err = normalize_zip_entry_rel_path(bad)
+                .expect_err("must reject windows-style unsafe path");
+            assert!(
+                err.to_string()
+                    .contains("unsafe archive entry path rejected")
+            );
         }
     }
 
@@ -782,14 +835,19 @@ mod tests {
             "bad*name.bin",
             "bad?name.bin",
         ] {
-            let err = normalize_zip_entry_rel_path(bad).expect_err("must reject unsafe special filename");
-            assert!(err.to_string().contains("unsafe archive entry path rejected"));
+            let err =
+                normalize_zip_entry_rel_path(bad).expect_err("must reject unsafe special filename");
+            assert!(
+                err.to_string()
+                    .contains("unsafe archive entry path rejected")
+            );
         }
     }
 
     #[test]
     fn import_rejects_duplicate_entry_aliases() {
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-dup-alias-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-corpus-dup-alias-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("root");
         let zip_path = root.join("in.zip");
 
@@ -808,13 +866,20 @@ mod tests {
         std::fs::create_dir_all(&out).expect("out");
 
         let err = import_zip(&zip_path, &out).expect_err("must reject alias duplicates");
-        assert!(err.to_string().contains("duplicate output file in archive is not allowed"));
-        assert!(!out.join("dup.bin").exists(), "duplicate rejection should be failure-atomic");
+        assert!(
+            err.to_string()
+                .contains("duplicate output file in archive is not allowed")
+        );
+        assert!(
+            !out.join("dup.bin").exists(),
+            "duplicate rejection should be failure-atomic"
+        );
     }
 
     #[test]
     fn import_rejects_case_insensitive_duplicate_entry_names() {
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-dup-case-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-corpus-dup-case-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("root");
         let zip_path = root.join("in.zip");
 
@@ -833,14 +898,24 @@ mod tests {
         std::fs::create_dir_all(&out).expect("out");
 
         let err = import_zip(&zip_path, &out).expect_err("must reject case-insensitive duplicates");
-        assert!(err.to_string().contains("duplicate output file in archive is not allowed"));
-        assert!(!out.join("dup.bin").exists(), "duplicate rejection should be failure-atomic");
-        assert!(!out.join("DUP.BIN").exists(), "duplicate rejection should be failure-atomic");
+        assert!(
+            err.to_string()
+                .contains("duplicate output file in archive is not allowed")
+        );
+        assert!(
+            !out.join("dup.bin").exists(),
+            "duplicate rejection should be failure-atomic"
+        );
+        assert!(
+            !out.join("DUP.BIN").exists(),
+            "duplicate rejection should be failure-atomic"
+        );
     }
 
     #[test]
     fn import_rejects_overwrite_of_existing_file() {
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-overwrite-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-corpus-overwrite-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("root");
         let zip_path = root.join("in.zip");
 
@@ -858,7 +933,10 @@ mod tests {
         std::fs::write(out.join("dup.bin"), b"old").expect("seed existing");
 
         let err = import_zip(&zip_path, &out).expect_err("must reject overwrite");
-        assert!(err.to_string().contains("refusing to overwrite existing output file"));
+        assert!(
+            err.to_string()
+                .contains("refusing to overwrite existing output file")
+        );
         assert_eq!(std::fs::read(out.join("dup.bin")).expect("read"), b"old");
     }
 
@@ -881,45 +959,51 @@ mod tests {
         std::fs::create_dir_all(&out).expect("out");
 
         let err = import_zip(&zip_path, &out).expect_err("must reject nul entry names");
-        assert!(err.to_string().contains("unsafe archive entry path rejected"));
+        assert!(
+            err.to_string()
+                .contains("unsafe archive entry path rejected")
+        );
         assert!(!out.join("bad").exists(), "must not write truncated output");
     }
 
     #[test]
     fn import_rejects_duplicate_entry_names_from_raw_headers() {
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-rawdup-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-corpus-rawdup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("root");
         let zip_path = root.join("dup.zip");
         let out = root.join("out");
         std::fs::create_dir_all(&out).expect("out");
 
-        let zip = build_zip_with_raw_entries(&[
-            (b"dup.bin", b"FIRST"),
-            (b"dup.bin", b"SECOND"),
-        ]);
+        let zip = build_zip_with_raw_entries(&[(b"dup.bin", b"FIRST"), (b"dup.bin", b"SECOND")]);
         std::fs::write(&zip_path, zip).expect("zip write");
 
         let err = import_zip(&zip_path, &out).expect_err("must reject duplicates");
-        assert!(err.to_string().contains("duplicate output file in archive is not allowed"));
+        assert!(
+            err.to_string()
+                .contains("duplicate output file in archive is not allowed")
+        );
         assert!(!out.join("dup.bin").exists(), "should fail before writes");
     }
 
     #[test]
     fn import_rejects_nul_collision_aliases_from_raw_headers() {
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-rawnuldup-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-corpus-rawnuldup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("root");
         let zip_path = root.join("dup.zip");
         let out = root.join("out");
         std::fs::create_dir_all(&out).expect("out");
 
-        let zip = build_zip_with_raw_entries(&[
-            (b"bad\0suffix.bin", b"FIRST"),
-            (b"bad", b"SECOND"),
-        ]);
+        let zip =
+            build_zip_with_raw_entries(&[(b"bad\0suffix.bin", b"FIRST"), (b"bad", b"SECOND")]);
         std::fs::write(&zip_path, zip).expect("zip write");
 
         let err = import_zip(&zip_path, &out).expect_err("must reject nul-collision aliases");
-        assert!(err.to_string().contains("unsafe archive entry path rejected"));
+        assert!(
+            err.to_string()
+                .contains("unsafe archive entry path rejected")
+        );
         assert!(!out.join("bad").exists(), "should fail before writes");
     }
 
@@ -928,7 +1012,10 @@ mod tests {
     fn export_rejects_symlinked_output_file() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-export-symlink-file-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "fozzy-corpus-export-symlink-file-{}",
+            uuid::Uuid::new_v4()
+        ));
         let corpus = root.join("corpus");
         std::fs::create_dir_all(&corpus).expect("corpus");
         std::fs::write(corpus.join("input.bin"), b"data").expect("input");
@@ -948,7 +1035,10 @@ mod tests {
     fn export_rejects_symlinked_parent_path() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-export-symlink-parent-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "fozzy-corpus-export-symlink-parent-{}",
+            uuid::Uuid::new_v4()
+        ));
         let corpus = root.join("corpus");
         std::fs::create_dir_all(&corpus).expect("corpus");
         std::fs::write(corpus.join("input.bin"), b"data").expect("input");
@@ -966,7 +1056,10 @@ mod tests {
 
     #[test]
     fn export_rejects_missing_source_directory() {
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-export-missing-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "fozzy-corpus-export-missing-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).expect("root");
         let out = root.join("out.zip");
         let src = root.join("does-not-exist");
@@ -978,27 +1071,42 @@ mod tests {
 
     #[test]
     fn export_rejects_empty_source_directory() {
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-export-empty-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "fozzy-corpus-export-empty-{}",
+            uuid::Uuid::new_v4()
+        ));
         let src = root.join("corpus");
         std::fs::create_dir_all(&src).expect("src");
         let out = root.join("out.zip");
 
         let err = export_zip(&src, &out).expect_err("must reject empty source");
-        assert!(err.to_string().contains("corpus directory has no files to export"));
+        assert!(
+            err.to_string()
+                .contains("corpus directory has no files to export")
+        );
         assert!(!out.exists(), "must not create zip for empty source");
     }
 
     #[test]
     fn export_rejects_file_source_path() {
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-export-file-source-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "fozzy-corpus-export-file-source-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).expect("root");
         let src = root.join("source.bin");
         std::fs::write(&src, b"payload").expect("source");
         let out = root.join("out.zip");
 
         let err = export_zip(&src, &out).expect_err("must reject non-directory source");
-        assert!(err.to_string().contains("corpus export source is not a directory"));
-        assert!(!out.exists(), "must not create zip for non-directory source");
+        assert!(
+            err.to_string()
+                .contains("corpus export source is not a directory")
+        );
+        assert!(
+            !out.exists(),
+            "must not create zip for non-directory source"
+        );
     }
 
     #[cfg(unix)]
@@ -1006,12 +1114,16 @@ mod tests {
     fn export_failure_does_not_clobber_existing_output_file() {
         use std::os::unix::fs::PermissionsExt;
 
-        let root = std::env::temp_dir().join(format!("fozzy-corpus-export-clobber-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "fozzy-corpus-export-clobber-{}",
+            uuid::Uuid::new_v4()
+        ));
         let src = root.join("corpus");
         std::fs::create_dir_all(&src).expect("src");
         let unreadable = src.join("secret.bin");
         std::fs::write(&unreadable, b"secret").expect("file");
-        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000))
+            .expect("chmod");
 
         let out = root.join("out.zip");
         std::fs::write(&out, b"KEEP").expect("seed output");
@@ -1021,6 +1133,7 @@ mod tests {
         assert_eq!(std::fs::read(&out).expect("out read"), b"KEEP");
 
         // cleanup for tempdir removal
-        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).expect("restore chmod");
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600))
+            .expect("restore chmod");
     }
 }

@@ -272,6 +272,31 @@ pub enum Step {
         from: Option<String>,
         payload: String,
     },
+    MemoryAlloc {
+        bytes: u64,
+        #[serde(default)]
+        key: Option<String>,
+        #[serde(default)]
+        tag: Option<String>,
+    },
+    MemoryFree {
+        #[serde(default)]
+        alloc_id: Option<u64>,
+        #[serde(default)]
+        key: Option<String>,
+    },
+    MemoryLimitMb {
+        mb: u64,
+    },
+    MemoryFailAfterAllocs {
+        count: u64,
+    },
+    MemoryCheckpoint {
+        name: String,
+    },
+    MemoryAssertInUseBytes {
+        equals: u64,
+    },
     AssertThrows {
         steps: Vec<Step>,
     },
@@ -333,6 +358,12 @@ impl Step {
             Step::NetSend { .. } => "net_send",
             Step::NetDeliverOne { .. } => "net_deliver_one",
             Step::NetRecvAssert { .. } => "net_recv_assert",
+            Step::MemoryAlloc { .. } => "memory_alloc",
+            Step::MemoryFree { .. } => "memory_free",
+            Step::MemoryLimitMb { .. } => "memory_limit_mb",
+            Step::MemoryFailAfterAllocs { .. } => "memory_fail_after_allocs",
+            Step::MemoryCheckpoint { .. } => "memory_checkpoint",
+            Step::MemoryAssertInUseBytes { .. } => "memory_assert_in_use_bytes",
             Step::AssertThrows { .. } => "assert_throws",
             Step::AssertRejects { .. } => "assert_rejects",
             Step::AssertEventuallyKv { .. } => "assert_eventually_kv",
@@ -395,6 +426,11 @@ impl Scenario {
                 } => {
                     return Err(FozzyError::Scenario(
                         "GetKvAssert: cannot set both equals and is_null=true".to_string(),
+                    ));
+                }
+                Step::MemoryFree { alloc_id, key } if alloc_id.is_some() == key.is_some() => {
+                    return Err(FozzyError::Scenario(
+                        "MemoryFree: set exactly one of alloc_id or key".to_string(),
                     ));
                 }
                 _ => {}

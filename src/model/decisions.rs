@@ -43,6 +43,17 @@ pub enum Decision {
         message_id: u64,
         dropped: bool,
     },
+    MemoryAlloc {
+        bytes: u64,
+        alloc_id: Option<u64>,
+        callsite_hash: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed_reason: Option<String>,
+    },
+    MemoryFree {
+        alloc_id: u64,
+        existed: bool,
+    },
     Step {
         index: usize,
         name: String,

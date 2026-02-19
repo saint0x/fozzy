@@ -1,2 +1,5 @@
 base_dir = ".fozzy"
 reporter = "pretty"
+mem_track = false
+fail_on_leak = false
+mem_artifacts = false

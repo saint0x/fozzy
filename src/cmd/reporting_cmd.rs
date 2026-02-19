@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use std::path::PathBuf;
 
-use crate::{render_html, render_junit_xml, Config, FlakeBudget, FozzyError, FozzyResult, Reporter, RunSummary, TraceFile};
+use crate::{
+    Config, FlakeBudget, FozzyError, FozzyResult, Reporter, RunSummary, TraceFile, render_html,
+    render_junit_xml,
+};
 
 #[derive(Debug, Subcommand)]
 pub enum ReportCommand {
@@ -56,12 +59,18 @@ pub fn report_command(config: &Config, command: &ReportCommand) -> FozzyResult<s
             let summary = load_summary(config, run)?;
             match format {
                 Reporter::Json => Ok(serde_json::to_value(summary)?),
-                Reporter::Pretty => Ok(serde_json::to_value(ReportEnvelope { format: *format, content: summary.pretty() })?),
+                Reporter::Pretty => Ok(serde_json::to_value(ReportEnvelope {
+                    format: *format,
+                    content: summary.pretty(),
+                })?),
                 Reporter::Junit => Ok(serde_json::to_value(ReportEnvelope {
                     format: *format,
                     content: render_junit_xml(&summary),
                 })?),
-                Reporter::Html => Ok(serde_json::to_value(ReportEnvelope { format: *format, content: render_html(&summary) })?),
+                Reporter::Html => Ok(serde_json::to_value(ReportEnvelope {
+                    format: *format,
+                    content: render_html(&summary),
+                })?),
             }
         }
 
@@ -79,7 +88,8 @@ pub fn report_command(config: &Config, command: &ReportCommand) -> FozzyResult<s
             }
             let expr = jq.as_deref().ok_or_else(|| {
                 FozzyError::Report(
-                    "missing --jq expression (or pass --list-paths to inspect available paths)".to_string(),
+                    "missing --jq expression (or pass --list-paths to inspect available paths)"
+                        .to_string(),
                 )
             })?;
             query_value(&value, expr)
@@ -88,7 +98,11 @@ pub fn report_command(config: &Config, command: &ReportCommand) -> FozzyResult<s
     }
 }
 
-fn flaky_command(config: &Config, runs: &[String], flake_budget: Option<FlakeBudget>) -> FozzyResult<serde_json::Value> {
+fn flaky_command(
+    config: &Config,
+    runs: &[String],
+    flake_budget: Option<FlakeBudget>,
+) -> FozzyResult<serde_json::Value> {
     if runs.len() < 2 {
         return Err(FozzyError::Report(
             "flaky analysis requires at least two runs/traces".to_string(),
@@ -136,13 +150,14 @@ fn flaky_command(config: &Config, runs: &[String], flake_budget: Option<FlakeBud
         ((total - dominant) / total) * 100.0
     };
     if let Some(budget) = flake_budget
-        && flake_rate_pct > budget.pct() {
-            return Err(FozzyError::Report(format!(
-                "flake budget exceeded: {:.2}% > {:.2}%",
-                flake_rate_pct,
-                budget.pct()
-            )));
-        }
+        && flake_rate_pct > budget.pct()
+    {
+        return Err(FozzyError::Report(format!(
+            "flake budget exceeded: {:.2}% > {:.2}%",
+            flake_rate_pct,
+            budget.pct()
+        )));
+    }
     let out = FlakyReport {
         schema_version: "fozzy.flaky_report.v1".to_string(),
         run_count: runs.len(),
@@ -205,10 +220,11 @@ fn query_value(root: &serde_json::Value, expr: &str) -> FozzyResult<serde_json::
                 for v in &current {
                     if let Some(arr) = v.as_array()
                         && let Ok(idx) = name.parse::<usize>()
-                            && let Some(item) = arr.get(idx) {
-                                next.push(item);
-                                continue;
-                            }
+                        && let Some(item) = arr.get(idx)
+                    {
+                        next.push(item);
+                        continue;
+                    }
                     if let Some(field) = v.get(&name) {
                         next.push(field);
                     }
@@ -254,7 +270,11 @@ fn query_value(root: &serde_json::Value, expr: &str) -> FozzyResult<serde_json::
 }
 
 fn list_query_paths(root: &serde_json::Value) -> Vec<String> {
-    fn visit(value: &serde_json::Value, path: String, out: &mut std::collections::BTreeSet<String>) {
+    fn visit(
+        value: &serde_json::Value,
+        path: String,
+        out: &mut std::collections::BTreeSet<String>,
+    ) {
         out.insert(path.clone());
         match value {
             serde_json::Value::Object(map) => {
@@ -279,10 +299,16 @@ fn list_query_paths(root: &serde_json::Value) -> Vec<String> {
 
     let mut out = std::collections::BTreeSet::new();
     visit(root, ".".to_string(), &mut out);
-    out.into_iter().map(|p| p.trim_start_matches('.').to_string()).collect()
+    out.into_iter()
+        .map(|p| p.trim_start_matches('.').to_string())
+        .collect()
 }
 
-fn suggest_query_paths(root: &serde_json::Value, normalized_expr: &str, limit: usize) -> Vec<String> {
+fn suggest_query_paths(
+    root: &serde_json::Value,
+    normalized_expr: &str,
+    limit: usize,
+) -> Vec<String> {
     let paths = list_query_paths(root);
     let needle = normalized_expr.trim_start_matches('.');
     let needle_lc = needle.to_ascii_lowercase();
@@ -296,7 +322,11 @@ fn suggest_query_paths(root: &serde_json::Value, normalized_expr: &str, limit: u
         .cloned()
         .collect();
     if exact_prefix.is_empty() {
-        let tail_lc = needle_lc.rsplit('.').next().unwrap_or(&needle_lc).to_string();
+        let tail_lc = needle_lc
+            .rsplit('.')
+            .next()
+            .unwrap_or(&needle_lc)
+            .to_string();
         exact_prefix = paths
             .iter()
             .filter(|p| {
@@ -326,9 +356,10 @@ fn apply_query_aliases(expr: &str) -> String {
             return (*to).to_string();
         }
         if let Some(rest) = expr.strip_prefix(from)
-            && (rest.starts_with('.') || rest.starts_with('[')) {
-                return format!("{to}{rest}");
-            }
+            && (rest.starts_with('.') || rest.starts_with('['))
+        {
+            return format!("{to}{rest}");
+        }
     }
     expr.to_string()
 }
@@ -355,7 +386,12 @@ fn normalize_query_expr(expr: &str) -> FozzyResult<String> {
     if expr.starts_with('.') {
         return Ok(expr.to_string());
     }
-    if expr.starts_with('[') || expr.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') {
+    if expr.starts_with('[')
+        || expr
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    {
         return Ok(format!(".{expr}"));
     }
     Err(FozzyError::Report(format!(
@@ -392,7 +428,9 @@ fn parse_expr(expr: &str) -> FozzyResult<Vec<QueryToken>> {
                 i += 1;
             }
             if i >= chars.len() || chars[i] != ']' || start == i {
-                return Err(FozzyError::Report(format!("invalid index expression in {expr:?}")));
+                return Err(FozzyError::Report(format!(
+                    "invalid index expression in {expr:?}"
+                )));
             }
             let idx_str: String = chars[start..i].iter().collect();
             i += 1; // skip ]
@@ -409,7 +447,9 @@ fn parse_expr(expr: &str) -> FozzyResult<Vec<QueryToken>> {
         }
         let field: String = chars[start..i].iter().collect();
         if field.is_empty() {
-            return Err(FozzyError::Report(format!("invalid field expression in {expr:?}")));
+            return Err(FozzyError::Report(format!(
+                "invalid field expression in {expr:?}"
+            )));
         }
         tokens.push(QueryToken::Field(field));
     }
@@ -440,6 +480,7 @@ mod tests {
             finished_at: "2026-01-01T00:00:00Z".to_string(),
             duration_ms: 0,
             tests: None,
+            memory: None,
             findings: if status == ExitStatus::Pass {
                 Vec::new()
             } else {
@@ -451,7 +492,11 @@ mod tests {
                 }]
             },
         };
-        std::fs::write(dir.join("report.json"), serde_json::to_vec_pretty(&summary).expect("json")).expect("write");
+        std::fs::write(
+            dir.join("report.json"),
+            serde_json::to_vec_pretty(&summary).expect("json"),
+        )
+        .expect("write");
         run_id.to_string()
     }
 
@@ -532,6 +577,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let out = flaky_command(
@@ -565,9 +616,16 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
-        let err = flaky_command(&cfg, &[a.clone(), a, b], None).expect_err("must reject duplicates");
+        let err =
+            flaky_command(&cfg, &[a.clone(), a, b], None).expect_err("must reject duplicates");
         assert!(err.to_string().contains("duplicate run reference"));
     }
 }

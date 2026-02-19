@@ -40,12 +40,12 @@ pub fn usage_doc() -> UsageDoc {
             UsageItem {
                 command: "fozzy test".to_string(),
                 when: "Run a suite of Fozzy scenarios in CI; turn on --det to make failures replayable. This is not a direct shell/cargo/jest runner.".to_string(),
-                how: "fozzy test --det --seed 1337 --record /tmp/test.fozzy; with multiple scenarios, traces are /tmp/test.1.fozzy, /tmp/test.2.fozzy, etc. Host backends (`--proc-backend host`, `--fs-backend host`, `--http-backend host`) are non-det only.".to_string(),
+                how: "fozzy test --det --seed 1337 --record /tmp/test.fozzy --mem-track --fail-on-leak --leak-budget 0; with multiple scenarios, traces are /tmp/test.1.fozzy, /tmp/test.2.fozzy, etc. Host backends (`--proc-backend host`, `--fs-backend host`, `--http-backend host`) are non-det only.".to_string(),
             },
             UsageItem {
                 command: "fozzy run".to_string(),
                 when: "Run a single scenario one-off while iterating locally or debugging a specific failure.".to_string(),
-                how: "fozzy run tests/example.fozzy.json --det --timeout 2s --json; in --det mode timeout is enforced on virtual elapsed time. For host execution, use `--proc-backend host`, `--fs-backend host`, `--http-backend host` (non-det). `http_request` supports `headers` + `expect_headers` assertions.".to_string(),
+                how: "fozzy run tests/example.fozzy.json --det --timeout 2s --json --mem-track --mem-limit-mb 256 --mem-fail-after 10000 --mem-artifacts; in --det mode timeout is enforced on virtual elapsed time. For host execution, use `--proc-backend host`, `--fs-backend host`, `--http-backend host` (non-det). `http_request` supports `headers` + `expect_headers` assertions.".to_string(),
             },
             UsageItem {
                 command: "fozzy replay".to_string(),

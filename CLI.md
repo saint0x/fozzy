@@ -66,7 +66,9 @@ fozzy init [--force] [--template <rust>]
 ```bash
 fozzy test [globs...] [--det] [--seed <n>] [--jobs <n>] [--timeout <dur>] \
   [--filter <expr>] [--reporter <json|pretty|junit|html>] \
-  [--record <path>] [--record-collision error|overwrite|append] [--fail-fast]
+  [--record <path>] [--record-collision error|overwrite|append] [--fail-fast] \
+  [--mem-track] [--mem-limit-mb <n>] [--mem-fail-after <n>] \
+  [--fail-on-leak] [--leak-budget <bytes>] [--mem-artifacts]
 ```
 
 `fozzy test` executes Fozzy scenario files. It does not directly launch arbitrary host test commands.
@@ -78,7 +80,9 @@ For host execution, use `--proc-backend host`, `--fs-backend host`, and/or `--ht
 ```bash
 fozzy run <scenario> [--det] [--seed <n>] [--timeout <dur>] \
   [--reporter <json|pretty|junit|html>] \
-  [--record <path>] [--record-collision error|overwrite|append]
+  [--record <path>] [--record-collision error|overwrite|append] \
+  [--mem-track] [--mem-limit-mb <n>] [--mem-fail-after <n>] \
+  [--fail-on-leak] [--leak-budget <bytes>] [--mem-artifacts]
 ```
 
 ### `fuzz`
@@ -87,7 +91,9 @@ fozzy run <scenario> [--det] [--seed <n>] [--timeout <dur>] \
 fozzy fuzz <target> [--mode coverage|property] [--seed <n>] [--time <dur>] \
   [--runs <n>] [--max-input <bytes>] [--corpus <dir>] [--mutator <name>] \
   [--shrink] [--record <path>] [--record-collision error|overwrite|append] \
-  [--reporter <json|pretty|junit|html>] [--crash-only] [--minimize]
+  [--reporter <json|pretty|junit|html>] [--crash-only] [--minimize] \
+  [--mem-track] [--mem-limit-mb <n>] [--mem-fail-after <n>] \
+  [--fail-on-leak] [--leak-budget <bytes>] [--mem-artifacts]
 ```
 
 ### `explore`
@@ -96,7 +102,9 @@ fozzy fuzz <target> [--mode coverage|property] [--seed <n>] [--time <dur>] \
 fozzy explore <scenario> [--seed <n>] [--time <dur>] [--steps <n>] [--nodes <n>] \
   [--faults <preset|file>] [--schedule <strategy>] [--checker <name>] \
   [--record <path>] [--record-collision error|overwrite|append] [--shrink] \
-  [--reporter <json|pretty|junit|html>] [--minimize]
+  [--reporter <json|pretty|junit|html>] [--minimize] \
+  [--mem-track] [--mem-limit-mb <n>] [--mem-fail-after <n>] \
+  [--fail-on-leak] [--leak-budget <bytes>] [--mem-artifacts]
 ```
 
 `--schedule`: `fifo | bfs | dfs | random | pct | coverage_guided`  

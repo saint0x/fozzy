@@ -294,7 +294,16 @@ export interface InitOptions {
   template?: "ts" | "rust" | "minimal";
 }
 
-export interface TestOptions {
+export interface MemoryOptions {
+  memTrack?: boolean;
+  memLimitMb?: number;
+  memFailAfter?: number;
+  failOnLeak?: boolean;
+  leakBudget?: number;
+  memArtifacts?: boolean;
+}
+
+export interface TestOptions extends MemoryOptions {
   globs?: string[];
   det?: boolean;
   seed?: number;
@@ -306,7 +315,7 @@ export interface TestOptions {
   failFast?: boolean;
 }
 
-export interface RunScenarioOptions {
+export interface RunScenarioOptions extends MemoryOptions {
   det?: boolean;
   seed?: number;
   timeout?: Duration;
@@ -333,9 +342,15 @@ export interface FuzzOptions {
   reporter?: Reporter;
   crashOnly?: boolean;
   minimize?: boolean;
+  memTrack?: boolean;
+  memLimitMb?: number;
+  memFailAfter?: number;
+  failOnLeak?: boolean;
+  leakBudget?: number;
+  memArtifacts?: boolean;
 }
 
-export interface ExploreOptions {
+export interface ExploreOptions extends MemoryOptions {
   seed?: number;
   time?: Duration;
   steps?: number;

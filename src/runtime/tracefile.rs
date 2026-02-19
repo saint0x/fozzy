@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    Decision, ExploreTrace, FozzyError, FozzyResult, FuzzTrace, RecordCollisionPolicy, RunMode, RunSummary,
-    ScenarioV1Steps, VersionInfo,
+    Decision, ExploreTrace, FozzyError, FozzyResult, FuzzTrace, MemoryTrace, RecordCollisionPolicy,
+    RunMode, RunSummary, ScenarioV1Steps, VersionInfo,
 };
 
-pub const CURRENT_TRACE_VERSION: u32 = 2;
+pub const CURRENT_TRACE_VERSION: u32 = 3;
 pub const TRACE_FORMAT: &str = "fozzy-trace";
 
 #[derive(Debug, Clone)]
@@ -39,6 +39,8 @@ pub struct TraceFile {
     pub fuzz: Option<FuzzTrace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explore: Option<ExploreTrace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<MemoryTrace>,
     pub decisions: Vec<Decision>,
     pub events: Vec<TraceEvent>,
     pub summary: RunSummary,
@@ -72,6 +74,7 @@ impl TraceFile {
             scenario,
             fuzz: None,
             explore: None,
+            memory: None,
             decisions,
             events,
             summary,
@@ -79,7 +82,12 @@ impl TraceFile {
         }
     }
 
-    pub fn new_fuzz(target: String, input: &[u8], events: Vec<TraceEvent>, summary: RunSummary) -> Self {
+    pub fn new_fuzz(
+        target: String,
+        input: &[u8],
+        events: Vec<TraceEvent>,
+        summary: RunSummary,
+    ) -> Self {
         Self {
             format: TRACE_FORMAT.to_string(),
             version: CURRENT_TRACE_VERSION,
@@ -92,6 +100,7 @@ impl TraceFile {
                 input_hex: bytes_to_hex(input),
             }),
             explore: None,
+            memory: None,
             decisions: Vec::new(),
             events,
             summary,
@@ -114,6 +123,7 @@ impl TraceFile {
             scenario: None,
             fuzz: None,
             explore: Some(explore),
+            memory: None,
             decisions,
             events,
             summary,
@@ -158,10 +168,7 @@ impl TraceFile {
     pub fn read_json(path: &Path) -> FozzyResult<Self> {
         let bytes = std::fs::read(path)?;
         let t: TraceFile = serde_json::from_slice(&bytes).map_err(|e| {
-            FozzyError::Trace(format!(
-                "failed to parse trace {}: {e}",
-                path.display()
-            ))
+            FozzyError::Trace(format!("failed to parse trace {}: {e}", path.display()))
         })?;
         validate_trace_header(&t, path)?;
         verify_checksum(&t, path)?;
@@ -225,7 +232,10 @@ pub fn trace_replay_warnings(trace: &TraceFile) -> Vec<String> {
                 .and_then(|v| v.as_str())
                 .is_some_and(|backend| backend == "host")
     });
-    let has_proc_decisions = trace.decisions.iter().any(|d| matches!(d, Decision::ProcSpawn { .. }));
+    let has_proc_decisions = trace
+        .decisions
+        .iter()
+        .any(|d| matches!(d, Decision::ProcSpawn { .. }));
     let used_host_http = trace.events.iter().any(|e| {
         e.name == "http_request"
             && e.fields
@@ -390,6 +400,7 @@ mod tests {
             finished_at: "2026-01-01T00:00:00Z".to_string(),
             duration_ms: 0,
             tests: None,
+            memory: None,
             findings: Vec::new(),
         }
     }
@@ -498,7 +509,8 @@ mod tests {
             Vec::new(),
             sample_summary(Some(path.to_string_lossy().to_string())),
         );
-        let err = write_trace_with_policy(&trace, &path, RecordCollisionPolicy::Error).expect_err("must fail");
+        let err = write_trace_with_policy(&trace, &path, RecordCollisionPolicy::Error)
+            .expect_err("must fail");
         assert!(err.to_string().contains("record collision"));
     }
 
@@ -518,7 +530,8 @@ mod tests {
             Vec::new(),
             sample_summary(None),
         );
-        let out = write_trace_with_policy(&trace, &path, RecordCollisionPolicy::Append).expect("append");
+        let out =
+            write_trace_with_policy(&trace, &path, RecordCollisionPolicy::Append).expect("append");
         assert_ne!(out, path);
         assert!(out.to_string_lossy().contains(".1.fozzy"));
         let loaded = TraceFile::read_json(&out).expect("trace exists");
@@ -618,9 +631,11 @@ mod tests {
         trace.write_json(&path).expect("write");
 
         let verify = verify_trace_file(&path).expect("verify");
-        assert!(verify
-            .warnings
-            .iter()
-            .any(|w| w.contains("host proc backend") && w.contains("replay may drift")));
+        assert!(
+            verify
+                .warnings
+                .iter()
+                .any(|w| w.contains("host proc backend") && w.contains("replay may drift"))
+        );
     }
 }

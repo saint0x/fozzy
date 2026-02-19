@@ -1,16 +1,16 @@
 //! Fozzy CLI entrypoint.
 
-use clap::{error::ErrorKind, Parser, Subcommand};
+use clap::{Parser, Subcommand, error::ErrorKind};
 use tracing_subscriber::EnvFilter;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use fozzy::{
-    ArtifactCommand, CiOptions, Config, CorpusCommand, ExitStatus, FlakeBudget, FozzyDuration, InitTemplate,
-    FsBackend, HttpBackend, ProcBackend, ReportCommand,
-    ExploreOptions, FuzzMode, FuzzOptions, FuzzTarget, RecordCollisionPolicy, Reporter, RunOptions, RunSummary,
-    ScenarioPath, ScheduleStrategy, ShrinkMinimize, TracePath,
+    ArtifactCommand, CiOptions, Config, CorpusCommand, ExitStatus, ExploreOptions, FlakeBudget,
+    FozzyDuration, FsBackend, FuzzMode, FuzzOptions, FuzzTarget, HttpBackend, InitTemplate,
+    MemoryOptions, ProcBackend, RecordCollisionPolicy, ReportCommand, Reporter, RunOptions,
+    RunSummary, ScenarioPath, ScheduleStrategy, ShrinkMinimize, TracePath,
 };
 
 #[derive(Debug, Parser)]
@@ -108,6 +108,30 @@ enum Command {
         /// Stop on first failure.
         #[arg(long)]
         fail_fast: bool,
+
+        /// Enable deterministic memory tracking capability.
+        #[arg(long)]
+        mem_track: bool,
+
+        /// Deterministic memory ceiling in MB.
+        #[arg(long)]
+        mem_limit_mb: Option<u64>,
+
+        /// Deterministic allocation failure after N allocations.
+        #[arg(long)]
+        mem_fail_after: Option<u64>,
+
+        /// Fail run on any detected leak.
+        #[arg(long)]
+        fail_on_leak: bool,
+
+        /// Leak budget in bytes.
+        #[arg(long)]
+        leak_budget: Option<u64>,
+
+        /// Emit dedicated memory artifacts.
+        #[arg(long)]
+        mem_artifacts: bool,
     },
 
     /// Run a single scenario file (one-off)
@@ -132,6 +156,19 @@ enum Command {
         /// Behavior when --record target exists: error, overwrite, or append with numeric suffix.
         #[arg(long, default_value = "error")]
         record_collision: RecordCollisionPolicy,
+
+        #[arg(long)]
+        mem_track: bool,
+        #[arg(long)]
+        mem_limit_mb: Option<u64>,
+        #[arg(long)]
+        mem_fail_after: Option<u64>,
+        #[arg(long)]
+        fail_on_leak: bool,
+        #[arg(long)]
+        leak_budget: Option<u64>,
+        #[arg(long)]
+        mem_artifacts: bool,
     },
 
     /// Coverage-guided or property-based fuzzing
@@ -177,6 +214,19 @@ enum Command {
         /// Behavior when --record target exists: error, overwrite, or append with numeric suffix.
         #[arg(long, default_value = "error")]
         record_collision: RecordCollisionPolicy,
+
+        #[arg(long)]
+        mem_track: bool,
+        #[arg(long)]
+        mem_limit_mb: Option<u64>,
+        #[arg(long)]
+        mem_fail_after: Option<u64>,
+        #[arg(long)]
+        fail_on_leak: bool,
+        #[arg(long)]
+        leak_budget: Option<u64>,
+        #[arg(long)]
+        mem_artifacts: bool,
     },
 
     /// Deterministic distributed schedule + fault exploration
@@ -219,6 +269,19 @@ enum Command {
         /// Behavior when --record target exists: error, overwrite, or append with numeric suffix.
         #[arg(long, default_value = "error")]
         record_collision: RecordCollisionPolicy,
+
+        #[arg(long)]
+        mem_track: bool,
+        #[arg(long)]
+        mem_limit_mb: Option<u64>,
+        #[arg(long)]
+        mem_fail_after: Option<u64>,
+        #[arg(long)]
+        fail_on_leak: bool,
+        #[arg(long)]
+        leak_budget: Option<u64>,
+        #[arg(long)]
+        mem_artifacts: bool,
     },
 
     /// Replay a previously recorded run exactly
@@ -342,9 +405,15 @@ fn main() -> ExitCode {
         eprintln!("warning: failed to init tracing: {err:#}");
     }
 
-    let cwd = cli.cwd.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let cwd = cli
+        .cwd
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     if let Err(err) = std::env::set_current_dir(&cwd) {
-        return print_error_and_exit(&cli, anyhow::anyhow!(err).context(format!("failed to set cwd to {}", cwd.display())));
+        return print_error_and_exit(
+            &cli,
+            anyhow::anyhow!(err).context(format!("failed to set cwd to {}", cwd.display())),
+        );
     }
 
     let config = Config::load_optional(&cli.config);
@@ -376,7 +445,8 @@ fn normalize_global_args(args: impl IntoIterator<Item = String>) -> Vec<String> 
                 globals.push(arg.clone());
                 i += 1;
             }
-            "--config" | "--cwd" | "--log" | "--proc-backend" | "--fs-backend" | "--http-backend" => {
+            "--config" | "--cwd" | "--log" | "--proc-backend" | "--fs-backend"
+            | "--http-backend" => {
                 globals.push(arg.clone());
                 if i + 1 < all.len() {
                     globals.push(all[i + 1].clone());
@@ -412,7 +482,10 @@ fn normalize_global_args(args: impl IntoIterator<Item = String>) -> Vec<String> 
 
 fn init_tracing(level: &str) -> anyhow::Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
-    tracing_subscriber::fmt().with_env_filter(filter).with_target(false).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .init();
     Ok(())
 }
 
@@ -422,7 +495,11 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
     let http_backend = cli.http_backend.unwrap_or(config.http_backend);
     match &cli.command {
         Command::Init { force, template } => {
-            fozzy::init_project(config, &InitTemplate::from_option(template.as_ref()), *force)?;
+            fozzy::init_project(
+                config,
+                &InitTemplate::from_option(template.as_ref()),
+                *force,
+            )?;
             Ok(ExitCode::SUCCESS)
         }
 
@@ -437,7 +514,21 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
             record,
             fail_fast,
             record_collision,
+            mem_track,
+            mem_limit_mb,
+            mem_fail_after,
+            fail_on_leak,
+            leak_budget,
+            mem_artifacts,
         } => {
+            let memory = MemoryOptions {
+                track: *mem_track || config.mem_track,
+                limit_mb: mem_limit_mb.or(config.mem_limit_mb),
+                fail_after_allocs: mem_fail_after.or(config.mem_fail_after),
+                fail_on_leak: *fail_on_leak || config.fail_on_leak,
+                leak_budget_bytes: leak_budget.or(config.leak_budget),
+                artifacts: *mem_artifacts || config.mem_artifacts || *mem_track || config.mem_track,
+            };
             let run = fozzy::run_tests(
                 config,
                 globs,
@@ -454,6 +545,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                     proc_backend,
                     fs_backend,
                     http_backend,
+                    memory,
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
@@ -469,7 +561,21 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
             reporter,
             record,
             record_collision,
+            mem_track,
+            mem_limit_mb,
+            mem_fail_after,
+            fail_on_leak,
+            leak_budget,
+            mem_artifacts,
         } => {
+            let memory = MemoryOptions {
+                track: *mem_track || config.mem_track,
+                limit_mb: mem_limit_mb.or(config.mem_limit_mb),
+                fail_after_allocs: mem_fail_after.or(config.mem_fail_after),
+                fail_on_leak: *fail_on_leak || config.fail_on_leak,
+                leak_budget_bytes: leak_budget.or(config.leak_budget),
+                artifacts: *mem_artifacts || config.mem_artifacts || *mem_track || config.mem_track,
+            };
             let run = fozzy::run_scenario(
                 config,
                 ScenarioPath::new(scenario.clone()),
@@ -486,6 +592,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                     proc_backend,
                     fs_backend,
                     http_backend,
+                    memory,
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
@@ -508,7 +615,21 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
             crash_only,
             minimize,
             record_collision,
+            mem_track,
+            mem_limit_mb,
+            mem_fail_after,
+            fail_on_leak,
+            leak_budget,
+            mem_artifacts,
         } => {
+            let memory = MemoryOptions {
+                track: *mem_track || config.mem_track,
+                limit_mb: mem_limit_mb.or(config.mem_limit_mb),
+                fail_after_allocs: mem_fail_after.or(config.mem_fail_after),
+                fail_on_leak: *fail_on_leak || config.fail_on_leak,
+                leak_budget_bytes: leak_budget.or(config.leak_budget),
+                artifacts: *mem_artifacts || config.mem_artifacts || *mem_track || config.mem_track,
+            };
             let target: FuzzTarget = target.parse()?;
             let run = fozzy::fuzz(
                 config,
@@ -527,6 +648,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                     crash_only: *crash_only,
                     minimize: *minimize,
                     record_collision: *record_collision,
+                    memory,
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
@@ -548,7 +670,21 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
             minimize,
             reporter,
             record_collision,
+            mem_track,
+            mem_limit_mb,
+            mem_fail_after,
+            fail_on_leak,
+            leak_budget,
+            mem_artifacts,
         } => {
+            let memory = MemoryOptions {
+                track: *mem_track || config.mem_track,
+                limit_mb: mem_limit_mb.or(config.mem_limit_mb),
+                fail_after_allocs: mem_fail_after.or(config.mem_fail_after),
+                fail_on_leak: *fail_on_leak || config.fail_on_leak,
+                leak_budget_bytes: leak_budget.or(config.leak_budget),
+                artifacts: *mem_artifacts || config.mem_artifacts || *mem_track || config.mem_track,
+            };
             let run = fozzy::explore(
                 config,
                 ScenarioPath::new(scenario.clone()),
@@ -565,6 +701,7 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                     minimize: *minimize,
                     reporter: *reporter,
                     record_collision: *record_collision,
+                    memory,
                 },
             )?;
             print_run_summary(cli, &run.summary)?;
@@ -598,7 +735,11 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
             match command {
                 TraceCommand::Verify { path } => {
                     let out = fozzy::verify_trace_file(path)?;
-                    if cli.strict && (!out.checksum_present || !out.checksum_valid || !out.warnings.is_empty()) {
+                    if cli.strict
+                        && (!out.checksum_present
+                            || !out.checksum_valid
+                            || !out.warnings.is_empty())
+                    {
                         let mut reasons = Vec::new();
                         if !out.checksum_present {
                             reasons.push("checksum missing".to_string());
@@ -683,9 +824,10 @@ fn run_command(cli: &Cli, config: &Config) -> anyhow::Result<ExitCode> {
                     reasons.push(format!("{} issue(s)", report.issues.len()));
                 }
                 if let Some(signals) = &report.nondeterminism_signals
-                    && !signals.is_empty() {
-                        reasons.push(format!("{} nondeterminism signal(s)", signals.len()));
-                    }
+                    && !signals.is_empty()
+                {
+                    reasons.push(format!("{} nondeterminism signal(s)", signals.len()));
+                }
                 if !reasons.is_empty() {
                     return Err(anyhow::anyhow!(
                         "strict mode: doctor reported {}",

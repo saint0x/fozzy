@@ -4,13 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use std::time::{Duration, SystemTime};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VirtualClock {
     now_ms: u64,
     frozen: bool,
 }
-
 
 impl VirtualClock {
     pub fn now_ms(&self) -> u64 {
@@ -50,4 +48,3 @@ pub fn wall_time_iso_utc() -> String {
     dt.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
-

@@ -10,14 +10,20 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::{
-    wall_time_iso_utc, Config, DistributedInvariant, DistributedStep, ExitStatus,
-    Finding, FindingKind, Reporter, RunIdentity, RunMode, RunSummary, ScenarioFile, ScenarioPath,
-    TraceEvent, TraceFile, write_trace_with_policy, RecordCollisionPolicy,
+    Config, DistributedInvariant, DistributedStep, ExitStatus, Finding, FindingKind,
+    RecordCollisionPolicy, Reporter, RunIdentity, RunMode, RunSummary, ScenarioFile, ScenarioPath,
+    TraceEvent, TraceFile, wall_time_iso_utc, write_trace_with_policy,
 };
 
 use crate::{FozzyError, FozzyResult};
 
-type ExploreExecResult = (ExitStatus, Vec<Finding>, Vec<TraceEvent>, u64, Vec<crate::Decision>);
+type ExploreExecResult = (
+    ExitStatus,
+    Vec<Finding>,
+    Vec<TraceEvent>,
+    u64,
+    Vec<crate::Decision>,
+);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,7 +38,14 @@ pub enum ScheduleStrategy {
 
 impl clap::ValueEnum for ScheduleStrategy {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Fifo, Self::Bfs, Self::Dfs, Self::Random, Self::Pct, Self::CoverageGuided]
+        &[
+            Self::Fifo,
+            Self::Bfs,
+            Self::Dfs,
+            Self::Random,
+            Self::Pct,
+            Self::CoverageGuided,
+        ]
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
@@ -61,6 +74,7 @@ pub struct ExploreOptions {
     pub minimize: bool,
     pub reporter: Reporter,
     pub record_collision: RecordCollisionPolicy,
+    pub memory: crate::MemoryOptions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,7 +134,11 @@ impl NetRules {
     }
 }
 
-pub fn explore(config: &Config, scenario_path: ScenarioPath, opt: &ExploreOptions) -> FozzyResult<crate::RunResult> {
+pub fn explore(
+    config: &Config,
+    scenario_path: ScenarioPath,
+    opt: &ExploreOptions,
+) -> FozzyResult<crate::RunResult> {
     let seed = opt.seed.unwrap_or_else(gen_seed);
     let run_id = Uuid::new_v4().to_string();
     let started_at = wall_time_iso_utc();
@@ -154,19 +172,29 @@ pub fn explore(config: &Config, scenario_path: ScenarioPath, opt: &ExploreOption
         finished_at,
         duration_ms,
         tests: None,
+        memory: None,
         findings: findings.clone(),
     };
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
     crate::write_run_manifest(&summary, &artifacts_dir)?;
-    std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&events)?)?;
+    std::fs::write(
+        artifacts_dir.join("events.json"),
+        serde_json::to_vec_pretty(&events)?,
+    )?;
     crate::write_timeline(&events, &artifacts_dir.join("timeline.json"))?;
 
     if matches!(opt.reporter, Reporter::Junit) {
-        std::fs::write(artifacts_dir.join("junit.xml"), crate::render_junit_xml(&summary))?;
+        std::fs::write(
+            artifacts_dir.join("junit.xml"),
+            crate::render_junit_xml(&summary),
+        )?;
     }
     if matches!(opt.reporter, Reporter::Html) {
-        std::fs::write(artifacts_dir.join("report.html"), crate::render_html(&summary))?;
+        std::fs::write(
+            artifacts_dir.join("report.html"),
+            crate::render_html(&summary),
+        )?;
     }
 
     let should_record = opt.record_trace_to.is_some() || status != ExitStatus::Pass;
@@ -201,12 +229,8 @@ pub fn replay_explore_trace(config: &Config, trace: &TraceFile) -> FozzyResult<c
     let started_at = wall_time_iso_utc();
     let finished_at = wall_time_iso_utc();
 
-    let (status, findings, events, _delivered, _decisions) = run_explore_replay_inner(
-        &explore.scenario,
-        seed,
-        explore.schedule,
-        &trace.decisions,
-    )?;
+    let (status, findings, events, _delivered, _decisions) =
+        run_explore_replay_inner(&explore.scenario, seed, explore.schedule, &trace.decisions)?;
 
     let artifacts_dir = config.runs_dir().join(&run_id);
     std::fs::create_dir_all(&artifacts_dir)?;
@@ -236,12 +260,16 @@ pub fn replay_explore_trace(config: &Config, trace: &TraceFile) -> FozzyResult<c
         finished_at,
         duration_ms: 0,
         tests: None,
+        memory: trace.memory.as_ref().map(|m| m.summary.clone()),
         findings,
     };
 
     std::fs::write(&report_path, serde_json::to_vec_pretty(&summary)?)?;
     crate::write_run_manifest(&summary, &artifacts_dir)?;
-    std::fs::write(artifacts_dir.join("events.json"), serde_json::to_vec_pretty(&events)?)?;
+    std::fs::write(
+        artifacts_dir.join("events.json"),
+        serde_json::to_vec_pretty(&events)?,
+    )?;
     crate::write_timeline(&events, &artifacts_dir.join("timeline.json"))?;
 
     Ok(crate::RunResult { summary })
@@ -257,7 +285,8 @@ pub fn shrink_explore_trace(
     let Some(explore) = trace.explore.as_ref() else {
         return Err(FozzyError::Trace("not an explore trace".to_string()));
     };
-    if opt.minimize != crate::ShrinkMinimize::All && opt.minimize != crate::ShrinkMinimize::Schedule {
+    if opt.minimize != crate::ShrinkMinimize::All && opt.minimize != crate::ShrinkMinimize::Schedule
+    {
         return Err(FozzyError::InvalidArgument(
             "explore shrink only supports --minimize schedule|all (v0.2)".to_string(),
         ));
@@ -269,7 +298,8 @@ pub fn shrink_explore_trace(
     let budget = opt.budget.unwrap_or(Duration::from_secs(15));
     let deadline = Instant::now() + budget;
 
-    if opt.minimize == crate::ShrinkMinimize::Schedule || opt.minimize == crate::ShrinkMinimize::All {
+    if opt.minimize == crate::ShrinkMinimize::Schedule || opt.minimize == crate::ShrinkMinimize::All
+    {
         let mut chunk = candidate.len().max(1).div_ceil(2);
         while chunk > 0 && Instant::now() < deadline && candidate.len() > 1 {
             let mut improved = false;
@@ -329,8 +359,13 @@ pub fn shrink_explore_trace(
                     steps: trial.clone(),
                     invariants: shrunk_scenario.invariants.clone(),
                 };
-                let (status, _findings, _events, _delivered, _decisions) =
-                    run_explore_inner(&trial_scenario, seed, explore.schedule, None, Some(Duration::from_secs(2)))?;
+                let (status, _findings, _events, _delivered, _decisions) = run_explore_inner(
+                    &trial_scenario,
+                    seed,
+                    explore.schedule,
+                    None,
+                    Some(Duration::from_secs(2)),
+                )?;
                 if crate::shrink_status_matches(target_status, status) {
                     steps = trial;
                     improved = true;
@@ -353,8 +388,16 @@ pub fn shrink_explore_trace(
         .clone()
         .unwrap_or_else(|| crate::default_min_trace_path(trace_path.as_path()));
 
-    let (status, findings, events, _delivered, out_decisions) = if opt.minimize == crate::ShrinkMinimize::All {
-        let trial = run_explore_inner(&shrunk_scenario, seed, explore.schedule, None, Some(Duration::from_secs(2)))?;
+    let (status, findings, events, _delivered, out_decisions) = if opt.minimize
+        == crate::ShrinkMinimize::All
+    {
+        let trial = run_explore_inner(
+            &shrunk_scenario,
+            seed,
+            explore.schedule,
+            None,
+            Some(Duration::from_secs(2)),
+        )?;
         if crate::shrink_status_matches(target_status, trial.0) {
             trial
         } else {
@@ -380,6 +423,7 @@ pub fn shrink_explore_trace(
         finished_at,
         duration_ms: 0,
         tests: None,
+        memory: trace.memory.as_ref().map(|m| m.summary.clone()),
         findings,
     };
 
@@ -418,7 +462,10 @@ fn is_shrinkable_setup_step(step: &DistributedStep) -> bool {
     )
 }
 
-fn load_explore_scenario(path: &ScenarioPath, nodes_override: Option<usize>) -> FozzyResult<ScenarioV1Explore> {
+fn load_explore_scenario(
+    path: &ScenarioPath,
+    nodes_override: Option<usize>,
+) -> FozzyResult<ScenarioV1Explore> {
     let bytes = std::fs::read(path.as_path())?;
     let file: ScenarioFile = serde_json::from_slice(&bytes)?;
     let ScenarioFile::Distributed(d) = file else {
@@ -497,27 +544,42 @@ fn run_explore_inner(
             time_ms = time_ms.saturating_add(d.as_millis().min(u128::from(u64::MAX)) as u64);
         }
 
-        apply_script_step(step, &mut nodes, &mut net, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
+        apply_script_step(
+            step,
+            &mut nodes,
+            &mut net,
+            &mut queue,
+            &mut next_id,
+            &mut events,
+            &mut time_ms,
+        )?;
     }
 
     while delivered < step_budget {
         if let Some(dl) = deadline
-            && Instant::now() >= dl {
-                findings.push(Finding {
-                    kind: FindingKind::Hang,
-                    title: "timeout".to_string(),
-                    message: "explore timed out".to_string(),
-                    location: None,
-                });
-                return Ok((ExitStatus::Timeout, findings, events, delivered, decisions));
-            }
+            && Instant::now() >= dl
+        {
+            findings.push(Finding {
+                kind: FindingKind::Hang,
+                title: "timeout".to_string(),
+                message: "explore timed out".to_string(),
+                location: None,
+            });
+            return Ok((ExitStatus::Timeout, findings, events, delivered, decisions));
+        }
 
         let deliverable = deliverable_indices(&queue, &nodes, &net);
         if deliverable.is_empty() {
             break;
         }
 
-        let pick = pick_index(&queue, &deliverable, schedule, &mut rng, &mut seen_strategy_edges);
+        let pick = pick_index(
+            &queue,
+            &deliverable,
+            schedule,
+            &mut rng,
+            &mut seen_strategy_edges,
+        );
         let idx = deliverable[pick];
         let msg = queue.remove(idx).expect("index exists");
         delivered += 1;
@@ -531,14 +593,30 @@ fn run_explore_inner(
             name: "deliver".to_string(),
             fields: serde_json::Map::from_iter([
                 ("id".to_string(), serde_json::Value::Number(msg.id.into())),
-                ("from".to_string(), serde_json::Value::String(msg.from.clone())),
+                (
+                    "from".to_string(),
+                    serde_json::Value::String(msg.from.clone()),
+                ),
                 ("to".to_string(), serde_json::Value::String(msg.to.clone())),
-                ("kind".to_string(), serde_json::Value::String(msg.kind.clone())),
-                ("key".to_string(), serde_json::Value::String(msg.key.clone())),
+                (
+                    "kind".to_string(),
+                    serde_json::Value::String(msg.kind.clone()),
+                ),
+                (
+                    "key".to_string(),
+                    serde_json::Value::String(msg.key.clone()),
+                ),
             ]),
         });
 
-        deliver_message(msg, &mut nodes, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
+        deliver_message(
+            msg,
+            &mut nodes,
+            &mut queue,
+            &mut next_id,
+            &mut events,
+            &mut time_ms,
+        )?;
 
         if let Some(finding) = check_invariants(scenario, &nodes, InvariantPhase::Progress) {
             findings.push(finding);
@@ -591,7 +669,15 @@ fn run_explore_replay_inner(
             let d = crate::parse_duration(duration)?;
             time_ms = time_ms.saturating_add(d.as_millis().min(u128::from(u64::MAX)) as u64);
         }
-        apply_script_step(step, &mut nodes, &mut net, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
+        apply_script_step(
+            step,
+            &mut nodes,
+            &mut net,
+            &mut queue,
+            &mut next_id,
+            &mut events,
+            &mut time_ms,
+        )?;
     }
 
     for d in decisions {
@@ -599,16 +685,19 @@ fn run_explore_replay_inner(
             crate::Decision::ExploreDeliver { msg_id } => *msg_id,
             crate::Decision::SchedulerPick { task_id, .. } => *task_id,
             crate::Decision::Step { name, .. } => {
-                let Some(id_str) = name.strip_prefix("deliver:") else { continue };
-                id_str.parse().map_err(|_| FozzyError::Trace("invalid deliver decision".to_string()))?
+                let Some(id_str) = name.strip_prefix("deliver:") else {
+                    continue;
+                };
+                id_str
+                    .parse()
+                    .map_err(|_| FozzyError::Trace("invalid deliver decision".to_string()))?
             }
             _ => continue,
         };
 
-        let idx = queue
-            .iter()
-            .position(|m| m.id == msg_id)
-            .ok_or_else(|| FozzyError::Trace(format!("replay drift: message id {msg_id} not found")))?;
+        let idx = queue.iter().position(|m| m.id == msg_id).ok_or_else(|| {
+            FozzyError::Trace(format!("replay drift: message id {msg_id} not found"))
+        })?;
         let msg = queue.remove(idx).expect("position exists");
         delivered += 1;
         time_ms = time_ms.saturating_add(1);
@@ -617,17 +706,39 @@ fn run_explore_replay_inner(
             name: "deliver".to_string(),
             fields: serde_json::Map::from_iter([
                 ("id".to_string(), serde_json::Value::Number(msg.id.into())),
-                ("from".to_string(), serde_json::Value::String(msg.from.clone())),
+                (
+                    "from".to_string(),
+                    serde_json::Value::String(msg.from.clone()),
+                ),
                 ("to".to_string(), serde_json::Value::String(msg.to.clone())),
-                ("kind".to_string(), serde_json::Value::String(msg.kind.clone())),
-                ("key".to_string(), serde_json::Value::String(msg.key.clone())),
+                (
+                    "kind".to_string(),
+                    serde_json::Value::String(msg.kind.clone()),
+                ),
+                (
+                    "key".to_string(),
+                    serde_json::Value::String(msg.key.clone()),
+                ),
             ]),
         });
-        deliver_message(msg, &mut nodes, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
+        deliver_message(
+            msg,
+            &mut nodes,
+            &mut queue,
+            &mut next_id,
+            &mut events,
+            &mut time_ms,
+        )?;
 
         if let Some(finding) = check_invariants(scenario, &nodes, InvariantPhase::Progress) {
             findings.push(finding);
-            return Ok((ExitStatus::Fail, findings, events, delivered, decisions.to_vec()));
+            return Ok((
+                ExitStatus::Fail,
+                findings,
+                events,
+                delivered,
+                decisions.to_vec(),
+            ));
         }
     }
 
@@ -635,7 +746,8 @@ fn run_explore_replay_inner(
     // This is intentionally permissive for shrink trials.
     let deliverable = deliverable_indices(&queue, &nodes, &net);
     if !deliverable.is_empty() {
-        let mut seen_strategy_edges: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut seen_strategy_edges: std::collections::HashSet<u64> =
+            std::collections::HashSet::new();
         let idx = deliverable[pick_index(
             &queue,
             &deliverable,
@@ -645,15 +757,34 @@ fn run_explore_replay_inner(
         )];
         let msg = queue.remove(idx).expect("index exists");
         delivered += 1;
-        deliver_message(msg, &mut nodes, &mut queue, &mut next_id, &mut events, &mut time_ms)?;
+        deliver_message(
+            msg,
+            &mut nodes,
+            &mut queue,
+            &mut next_id,
+            &mut events,
+            &mut time_ms,
+        )?;
     }
 
     if let Some(finding) = check_invariants(scenario, &nodes, InvariantPhase::Final) {
         findings.push(finding);
-        return Ok((ExitStatus::Fail, findings, events, delivered, decisions.to_vec()));
+        return Ok((
+            ExitStatus::Fail,
+            findings,
+            events,
+            delivered,
+            decisions.to_vec(),
+        ));
     }
 
-    Ok((ExitStatus::Pass, findings, events, delivered, decisions.to_vec()))
+    Ok((
+        ExitStatus::Pass,
+        findings,
+        events,
+        delivered,
+        decisions.to_vec(),
+    ))
 }
 
 fn apply_script_step(
@@ -707,7 +838,12 @@ fn apply_script_step(
             Ok(())
         }
 
-        DistributedStep::ClientGetAssert { node, key, equals, is_null } => {
+        DistributedStep::ClientGetAssert {
+            node,
+            key,
+            equals,
+            is_null,
+        } => {
             let Some(n) = nodes.get(node) else {
                 return Err(FozzyError::Scenario(format!("unknown node {node:?}")));
             };
@@ -717,7 +853,9 @@ fn apply_script_step(
             let got = n.kv.get(key).cloned();
             if is_null.unwrap_or(false) {
                 if got.is_some() {
-                    return Err(FozzyError::Scenario(format!("expected {node}.{key} to be null")));
+                    return Err(FozzyError::Scenario(format!(
+                        "expected {node}.{key} to be null"
+                    )));
                 }
                 return Ok(());
             }
@@ -728,7 +866,9 @@ fn apply_script_step(
                     )));
                 }
             } else if got.is_none() {
-                return Err(FozzyError::Scenario(format!("expected {node}.{key} to exist")));
+                return Err(FozzyError::Scenario(format!(
+                    "expected {node}.{key} to exist"
+                )));
             }
             Ok(())
         }
@@ -766,7 +906,10 @@ fn apply_script_step(
             events.push(TraceEvent {
                 time_ms: *time_ms,
                 name: "crash".to_string(),
-                fields: serde_json::Map::from_iter([("node".to_string(), serde_json::Value::String(node.clone()))]),
+                fields: serde_json::Map::from_iter([(
+                    "node".to_string(),
+                    serde_json::Value::String(node.clone()),
+                )]),
             });
             Ok(())
         }
@@ -778,7 +921,10 @@ fn apply_script_step(
             events.push(TraceEvent {
                 time_ms: *time_ms,
                 name: "restart".to_string(),
-                fields: serde_json::Map::from_iter([("node".to_string(), serde_json::Value::String(node.clone()))]),
+                fields: serde_json::Map::from_iter([(
+                    "node".to_string(),
+                    serde_json::Value::String(node.clone()),
+                )]),
             });
             Ok(())
         }
@@ -860,7 +1006,9 @@ fn check_invariants(
                         return Some(Finding {
                             kind: FindingKind::Invariant,
                             title: "kv_all_equal".to_string(),
-                            message: format!("invariant violated for key {key:?}: values diverged across nodes"),
+                            message: format!(
+                                "invariant violated for key {key:?}: values diverged across nodes"
+                            ),
                             location: None,
                         });
                     }
@@ -875,7 +1023,9 @@ fn check_invariants(
                         return Some(Finding {
                             kind: FindingKind::Invariant,
                             title: "kv_present_on_all".to_string(),
-                            message: format!("invariant violated: key {key:?} missing on node {name:?}"),
+                            message: format!(
+                                "invariant violated: key {key:?} missing on node {name:?}"
+                            ),
                             location: None,
                         });
                     }
@@ -975,7 +1125,10 @@ fn apply_faults_preset(scenario: &mut ScenarioV1Explore, faults: Option<&str>) -
     Ok(())
 }
 
-fn apply_checker_override(scenario: &mut ScenarioV1Explore, checker: Option<&str>) -> FozzyResult<()> {
+fn apply_checker_override(
+    scenario: &mut ScenarioV1Explore,
+    checker: Option<&str>,
+) -> FozzyResult<()> {
     let Some(checker) = checker else {
         return Ok(());
     };
@@ -1031,10 +1184,16 @@ fn parse_checker_token(token: &str) -> FozzyResult<DistributedInvariant> {
     )))
 }
 
-fn deliverable_indices(queue: &VecDeque<Message>, nodes: &BTreeMap<String, Node>, net: &NetRules) -> Vec<usize> {
+fn deliverable_indices(
+    queue: &VecDeque<Message>,
+    nodes: &BTreeMap<String, Node>,
+    net: &NetRules,
+) -> Vec<usize> {
     let mut out = Vec::new();
     for (idx, m) in queue.iter().enumerate() {
-        let Some(from) = nodes.get(&m.from) else { continue };
+        let Some(from) = nodes.get(&m.from) else {
+            continue;
+        };
         let Some(to) = nodes.get(&m.to) else { continue };
         if !from.running || !to.running {
             continue;

@@ -65,4 +65,3 @@ impl<T> DeterministicScheduler<T> {
         self.queue.remove(idx)
     }
 }
-

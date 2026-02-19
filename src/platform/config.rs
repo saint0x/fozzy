@@ -26,6 +26,30 @@ pub struct Config {
     /// HTTP backend for http_request/http_when steps.
     #[serde(default = "default_http_backend")]
     pub http_backend: crate::HttpBackend,
+
+    /// Enable deterministic memory capability tracking by default.
+    #[serde(default)]
+    pub mem_track: bool,
+
+    /// Optional deterministic memory ceiling (MB).
+    #[serde(default)]
+    pub mem_limit_mb: Option<u64>,
+
+    /// Optional deterministic allocation failure after N allocs.
+    #[serde(default)]
+    pub mem_fail_after: Option<u64>,
+
+    /// Fail run when leaks are detected.
+    #[serde(default)]
+    pub fail_on_leak: bool,
+
+    /// Leak budget in bytes; exceed => finding/fail.
+    #[serde(default)]
+    pub leak_budget: Option<u64>,
+
+    /// Emit dedicated memory artifacts.
+    #[serde(default)]
+    pub mem_artifacts: bool,
 }
 
 fn default_base_dir() -> PathBuf {
@@ -56,6 +80,12 @@ impl Default for Config {
             proc_backend: default_proc_backend(),
             fs_backend: default_fs_backend(),
             http_backend: default_http_backend(),
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         }
     }
 }

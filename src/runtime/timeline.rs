@@ -32,4 +32,3 @@ pub fn write_timeline(events: &[TraceEvent], out_path: &Path) -> FozzyResult<()>
     std::fs::write(out_path, serde_json::to_vec_pretty(&timeline)?)?;
     Ok(())
 }
-

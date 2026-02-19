@@ -49,7 +49,8 @@ pub fn find_matching_files(patterns: &[String]) -> FozzyResult<Vec<PathBuf>> {
 fn compile_globset(patterns: &[String]) -> FozzyResult<GlobSet> {
     let mut b = GlobSetBuilder::new();
     for p in patterns {
-        let g = Glob::new(p).map_err(|e| FozzyError::InvalidArgument(format!("invalid glob {p:?}: {e}")))?;
+        let g = Glob::new(p)
+            .map_err(|e| FozzyError::InvalidArgument(format!("invalid glob {p:?}: {e}")))?;
         b.add(g);
     }
     b.build()
@@ -66,7 +67,10 @@ fn has_glob_meta(pattern: &str) -> bool {
 }
 
 pub fn default_min_trace_path(input: &std::path::Path) -> PathBuf {
-    let parent = input.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+    let parent = input
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
     let file_name = input
         .file_name()
         .and_then(|s| s.to_str())
@@ -96,8 +100,10 @@ mod tests {
     fn find_matching_files_accepts_absolute_file_path() {
         let root = temp_dir("abs-file");
         let scenario = root.join("abs.fozzy.json");
-        std::fs::write(&scenario, br#"{"version":1,"name":"x","steps":[]}"#).expect("write scenario");
-        let matches = find_matching_files(&[scenario.to_string_lossy().to_string()]).expect("match files");
+        std::fs::write(&scenario, br#"{"version":1,"name":"x","steps":[]}"#)
+            .expect("write scenario");
+        let matches =
+            find_matching_files(&[scenario.to_string_lossy().to_string()]).expect("match files");
         assert!(matches.iter().any(|p| p == &scenario));
     }
 }

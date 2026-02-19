@@ -40,6 +40,7 @@ pub enum ArtifactCommand {
 pub enum ArtifactKind {
     Trace,
     Timeline,
+    Memory,
     Events,
     Report,
     Manifest,
@@ -126,13 +127,22 @@ pub struct TraceDelta {
     pub left_events: usize,
     #[serde(rename = "rightEvents")]
     pub right_events: usize,
-    #[serde(rename = "firstDecisionDiffIndex", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "firstDecisionDiffIndex",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub first_decision_diff_index: Option<usize>,
-    #[serde(rename = "firstEventDiffIndex", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "firstEventDiffIndex",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub first_event_diff_index: Option<usize>,
 }
 
-pub fn artifacts_command(config: &Config, command: &ArtifactCommand) -> FozzyResult<ArtifactOutput> {
+pub fn artifacts_command(
+    config: &Config,
+    command: &ArtifactCommand,
+) -> FozzyResult<ArtifactOutput> {
     match command {
         ArtifactCommand::Ls { run } => Ok(ArtifactOutput::List {
             entries: artifacts_list(config, run)?,
@@ -163,11 +173,43 @@ fn artifacts_list(config: &Config, run: &str) -> FozzyResult<Vec<ArtifactEntry>>
         let mut out = Vec::new();
         push_if_exists(&mut out, ArtifactKind::Trace, run_path.clone())?;
         if let Some(parent) = run_path.parent() {
-            push_if_exists(&mut out, ArtifactKind::Timeline, parent.join("timeline.json"))?;
+            push_if_exists(
+                &mut out,
+                ArtifactKind::Timeline,
+                parent.join("timeline.json"),
+            )?;
+            push_if_exists(
+                &mut out,
+                ArtifactKind::Memory,
+                parent.join("memory.timeline.json"),
+            )?;
+            push_if_exists(
+                &mut out,
+                ArtifactKind::Memory,
+                parent.join("memory.leaks.json"),
+            )?;
+            push_if_exists(
+                &mut out,
+                ArtifactKind::Memory,
+                parent.join("memory.graph.json"),
+            )?;
+            push_if_exists(
+                &mut out,
+                ArtifactKind::Memory,
+                parent.join("memory.delta.json"),
+            )?;
             push_if_exists(&mut out, ArtifactKind::Report, parent.join("report.json"))?;
             push_if_exists(&mut out, ArtifactKind::Events, parent.join("events.json"))?;
-            push_if_exists(&mut out, ArtifactKind::Coverage, parent.join("coverage.json"))?;
-            push_if_exists(&mut out, ArtifactKind::Manifest, parent.join("manifest.json"))?;
+            push_if_exists(
+                &mut out,
+                ArtifactKind::Coverage,
+                parent.join("coverage.json"),
+            )?;
+            push_if_exists(
+                &mut out,
+                ArtifactKind::Manifest,
+                parent.join("manifest.json"),
+            )?;
             push_if_exists(&mut out, ArtifactKind::Report, parent.join("report.html"))?;
             push_if_exists(&mut out, ArtifactKind::Report, parent.join("junit.xml"))?;
         }
@@ -195,14 +237,66 @@ fn artifacts_list(config: &Config, run: &str) -> FozzyResult<Vec<ArtifactEntry>>
     }
     let mut out = Vec::new();
 
-    push_if_exists(&mut out, ArtifactKind::Trace, artifacts_dir.join("trace.fozzy"))?;
-    push_if_exists(&mut out, ArtifactKind::Timeline, artifacts_dir.join("timeline.json"))?;
-    push_if_exists(&mut out, ArtifactKind::Report, artifacts_dir.join("report.json"))?;
-    push_if_exists(&mut out, ArtifactKind::Events, artifacts_dir.join("events.json"))?;
-    push_if_exists(&mut out, ArtifactKind::Coverage, artifacts_dir.join("coverage.json"))?;
-    push_if_exists(&mut out, ArtifactKind::Manifest, artifacts_dir.join("manifest.json"))?;
-    push_if_exists(&mut out, ArtifactKind::Report, artifacts_dir.join("report.html"))?;
-    push_if_exists(&mut out, ArtifactKind::Report, artifacts_dir.join("junit.xml"))?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Trace,
+        artifacts_dir.join("trace.fozzy"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Timeline,
+        artifacts_dir.join("timeline.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Memory,
+        artifacts_dir.join("memory.timeline.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Memory,
+        artifacts_dir.join("memory.leaks.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Memory,
+        artifacts_dir.join("memory.graph.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Memory,
+        artifacts_dir.join("memory.delta.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Report,
+        artifacts_dir.join("report.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Events,
+        artifacts_dir.join("events.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Coverage,
+        artifacts_dir.join("coverage.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Manifest,
+        artifacts_dir.join("manifest.json"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Report,
+        artifacts_dir.join("report.html"),
+    )?;
+    push_if_exists(
+        &mut out,
+        ArtifactKind::Report,
+        artifacts_dir.join("junit.xml"),
+    )?;
 
     Ok(out)
 }
@@ -231,8 +325,14 @@ fn export_reproducer_pack(config: &Config, run: &str, out: &Path) -> FozzyResult
     let meta_dir = std::env::temp_dir().join(format!("fozzy-pack-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&meta_dir)?;
     let meta_files = vec![
-        ("env.json", serde_json::to_vec_pretty(&crate::env_info(config))?),
-        ("version.json", serde_json::to_vec_pretty(&crate::version_info())?),
+        (
+            "env.json",
+            serde_json::to_vec_pretty(&crate::env_info(config))?,
+        ),
+        (
+            "version.json",
+            serde_json::to_vec_pretty(&crate::version_info())?,
+        ),
         (
             "commandline.json",
             serde_json::to_vec_pretty(&serde_json::json!({
@@ -319,11 +419,7 @@ fn artifacts_diff(config: &Config, left: &str, right: &str) -> FozzyResult<Artif
         right_map.insert(key, entry);
     }
 
-    let mut keys: Vec<String> = left_map
-        .keys()
-        .chain(right_map.keys())
-        .cloned()
-        .collect();
+    let mut keys: Vec<String> = left_map.keys().chain(right_map.keys()).cloned().collect();
     keys.sort();
     keys.dedup();
 
@@ -470,7 +566,11 @@ pub(crate) fn resolve_artifacts_dir(config: &Config, run: &str) -> FozzyResult<P
     Ok(config.runs_dir().join(run))
 }
 
-fn push_if_exists(out: &mut Vec<ArtifactEntry>, kind: ArtifactKind, path: PathBuf) -> FozzyResult<()> {
+fn push_if_exists(
+    out: &mut Vec<ArtifactEntry>,
+    kind: ArtifactKind,
+    path: PathBuf,
+) -> FozzyResult<()> {
     if !path.exists() {
         return Ok(());
     }
@@ -496,7 +596,11 @@ fn export_artifacts_zip(files: &[PathBuf], out_zip: &Path) -> FozzyResult<()> {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("artifacts.zip");
-    let tmp_name = format!(".{file_name}.{}.{}.tmp", std::process::id(), uuid::Uuid::new_v4());
+    let tmp_name = format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    );
     let tmp_path = out_zip
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -590,9 +694,9 @@ fn copy_file_into_dir_secure(src: &Path, out_dir: &Path) -> FozzyResult<()> {
         }
     }
 
-    let name = src
-        .file_name()
-        .ok_or_else(|| crate::FozzyError::InvalidArgument(format!("invalid artifact path: {}", src.display())))?;
+    let name = src.file_name().ok_or_else(|| {
+        crate::FozzyError::InvalidArgument(format!("invalid artifact path: {}", src.display()))
+    })?;
     let dst = out_dir.join(name);
     if dst.exists() {
         let dst_md = std::fs::symlink_metadata(&dst)?;
@@ -642,7 +746,12 @@ fn validate_copy_targets_secure(files: &[PathBuf], out_dir: &Path) -> FozzyResul
         let name = src
             .file_name()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| crate::FozzyError::InvalidArgument(format!("invalid artifact path: {}", src.display())))?
+            .ok_or_else(|| {
+                crate::FozzyError::InvalidArgument(format!(
+                    "invalid artifact path: {}",
+                    src.display()
+                ))
+            })?
             .to_string();
         if !seen.insert(name.clone()) {
             return Err(crate::FozzyError::InvalidArgument(format!(
@@ -822,7 +931,8 @@ mod tests {
 
     #[test]
     fn export_zip_normalizes_unicode_filenames_to_ascii() {
-        let root = std::env::temp_dir().join(format!("fozzy-artifacts-unicode-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-artifacts-unicode-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("create temp root");
         let src_a = root.join("résumé-😀.json");
         let src_b = root.join("résumé 👀.json");
@@ -846,7 +956,8 @@ mod tests {
 
     #[test]
     fn export_missing_input_returns_error_and_does_not_create_zip() {
-        let root = std::env::temp_dir().join(format!("fozzy-artifacts-missing-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-artifacts-missing-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("create temp root");
         let out = root.join("missing-input.zip");
 
@@ -856,18 +967,27 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
-        let err = export_artifacts(&cfg, "does-not-exist-input.fozzy", &out).expect_err("must fail");
+        let err =
+            export_artifacts(&cfg, "does-not-exist-input.fozzy", &out).expect_err("must fail");
         assert!(err.to_string().contains("not found"));
         assert!(!out.exists(), "zip should not exist on failure");
     }
 
     #[test]
     fn export_empty_run_errors() {
-        let root = std::env::temp_dir().join(format!("fozzy-artifacts-empty-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-artifacts-empty-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("create temp root");
         let run_id = "empty-run";
-        std::fs::create_dir_all(root.join(".fozzy").join("runs").join(run_id)).expect("create run dir");
+        std::fs::create_dir_all(root.join(".fozzy").join("runs").join(run_id))
+            .expect("create run dir");
         let out = root.join("empty.zip");
 
         let cfg = crate::Config {
@@ -876,6 +996,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
         let err = export_artifacts(&cfg, run_id, &out).expect_err("must fail");
         assert!(err.to_string().contains("no artifacts found"));
@@ -898,6 +1024,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
         export_reproducer_pack(&cfg, "r1", &out).expect("pack");
         let file = std::fs::File::open(&out).expect("zip");
@@ -916,7 +1048,8 @@ mod tests {
     fn pack_dir_rejects_symlink_target_overwrite() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!("fozzy-pack-symlink-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-pack-symlink-{}", uuid::Uuid::new_v4()));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
@@ -929,6 +1062,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let outside = root.join("outside.json");
@@ -937,7 +1076,8 @@ mod tests {
         std::fs::create_dir_all(&out_dir).expect("out");
         symlink(&outside, out_dir.join("report.json")).expect("symlink");
 
-        let err = export_reproducer_pack(&cfg, "r1", &out_dir).expect_err("must reject symlink overwrite");
+        let err = export_reproducer_pack(&cfg, "r1", &out_dir)
+            .expect_err("must reject symlink overwrite");
         assert!(err.to_string().contains("symlinked output file"));
         let victim = std::fs::read_to_string(&outside).expect("read victim");
         assert!(victim.contains("victim"));
@@ -961,6 +1101,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let outside = root.join("outside.json");
@@ -969,16 +1115,27 @@ mod tests {
         std::fs::create_dir_all(&out_dir).expect("out");
         symlink(&outside, out_dir.join("manifest.json")).expect("symlink");
 
-        let err = export_reproducer_pack(&cfg, "r1", &out_dir).expect_err("must reject symlink overwrite");
+        let err = export_reproducer_pack(&cfg, "r1", &out_dir)
+            .expect_err("must reject symlink overwrite");
         assert!(err.to_string().contains("symlinked output file"));
-        assert_eq!(std::fs::read(&outside).expect("victim read"), br#"{"victim":true}"#);
-        assert!(!out_dir.join("report.json").exists(), "partial file should not be written");
-        assert!(!out_dir.join("events.json").exists(), "partial file should not be written");
+        assert_eq!(
+            std::fs::read(&outside).expect("victim read"),
+            br#"{"victim":true}"#
+        );
+        assert!(
+            !out_dir.join("report.json").exists(),
+            "partial file should not be written"
+        );
+        assert!(
+            !out_dir.join("events.json").exists(),
+            "partial file should not be written"
+        );
     }
 
     #[test]
     fn pack_zip_is_byte_deterministic_for_same_run() {
-        let root = std::env::temp_dir().join(format!("fozzy-pack-deterministic-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-pack-deterministic-{}", uuid::Uuid::new_v4()));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
@@ -992,6 +1149,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let out_a = root.join("a.zip");
@@ -1001,41 +1164,56 @@ mod tests {
 
         let a = std::fs::read(&out_a).expect("read a");
         let b = std::fs::read(&out_b).expect("read b");
-        assert_eq!(a, b, "repeated pack exports for same run must be byte-identical");
+        assert_eq!(
+            a, b,
+            "repeated pack exports for same run must be byte-identical"
+        );
     }
 
     #[test]
     fn export_and_pack_reject_incomplete_run_directory() {
-        let root = std::env::temp_dir().join(format!("fozzy-pack-incomplete-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-pack-incomplete-{}", uuid::Uuid::new_v4()));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
-        std::fs::write(
-            run_dir.join("manifest.json"),
-            valid_manifest_json("r1"),
-        )
-        .expect("manifest");
+        std::fs::write(run_dir.join("manifest.json"), valid_manifest_json("r1")).expect("manifest");
         let cfg = crate::Config {
             base_dir: root.join(".fozzy"),
             reporter: crate::Reporter::Pretty,
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
         let out_pack = root.join("pack.zip");
         let out_export = root.join("export.zip");
 
-        let err_pack = export_reproducer_pack(&cfg, "r1", &out_pack).expect_err("pack must fail for incomplete run");
+        let err_pack = export_reproducer_pack(&cfg, "r1", &out_pack)
+            .expect_err("pack must fail for incomplete run");
         assert!(err_pack.to_string().contains("incomplete artifacts"));
-        assert!(!out_pack.exists(), "pack zip should not be created on incomplete run");
+        assert!(
+            !out_pack.exists(),
+            "pack zip should not be created on incomplete run"
+        );
 
-        let err_export = export_artifacts(&cfg, "r1", &out_export).expect_err("export must fail for incomplete run");
+        let err_export = export_artifacts(&cfg, "r1", &out_export)
+            .expect_err("export must fail for incomplete run");
         assert!(err_export.to_string().contains("incomplete artifacts"));
-        assert!(!out_export.exists(), "export zip should not be created on incomplete run");
+        assert!(
+            !out_export.exists(),
+            "export zip should not be created on incomplete run"
+        );
     }
 
     #[test]
     fn export_and_pack_allow_run_dirs_without_trace_or_events() {
-        let root = std::env::temp_dir().join(format!("fozzy-pack-minimal-run-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-pack-minimal-run-{}", uuid::Uuid::new_v4()));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
@@ -1046,6 +1224,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
         let out_pack = root.join("pack.zip");
         let out_export = root.join("export.zip");
@@ -1058,7 +1242,8 @@ mod tests {
 
     #[test]
     fn pack_dir_prunes_stale_preexisting_files() {
-        let root = std::env::temp_dir().join(format!("fozzy-pack-stale-dir-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-pack-stale-dir-{}", uuid::Uuid::new_v4()));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
@@ -1071,6 +1256,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let out_dir = root.join("out");
@@ -1078,13 +1269,20 @@ mod tests {
         std::fs::write(out_dir.join("stale.txt"), b"old").expect("stale");
 
         export_reproducer_pack(&cfg, "r1", &out_dir).expect("pack should prune stale files");
-        assert!(!out_dir.join("stale.txt").exists(), "stale entry should be removed");
-        assert!(out_dir.join("manifest.json").exists(), "expected artifact should exist");
+        assert!(
+            !out_dir.join("stale.txt").exists(),
+            "stale entry should be removed"
+        );
+        assert!(
+            out_dir.join("manifest.json").exists(),
+            "expected artifact should exist"
+        );
     }
 
     #[test]
     fn export_dir_prunes_stale_preexisting_files() {
-        let root = std::env::temp_dir().join(format!("fozzy-export-stale-dir-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-export-stale-dir-{}", uuid::Uuid::new_v4()));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
@@ -1095,6 +1293,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let out_dir = root.join("out");
@@ -1102,13 +1306,20 @@ mod tests {
         std::fs::write(out_dir.join("stale.txt"), b"old").expect("stale");
 
         export_artifacts(&cfg, "r1", &out_dir).expect("export should prune stale files");
-        assert!(!out_dir.join("stale.txt").exists(), "stale entry should be removed");
-        assert!(out_dir.join("manifest.json").exists(), "expected artifact should exist");
+        assert!(
+            !out_dir.join("stale.txt").exists(),
+            "stale entry should be removed"
+        );
+        assert!(
+            out_dir.join("manifest.json").exists(),
+            "expected artifact should exist"
+        );
     }
 
     #[test]
     fn pack_and_export_reject_invalid_manifest_bytes() {
-        let root = std::env::temp_dir().join(format!("fozzy-pack-bad-manifest-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("fozzy-pack-bad-manifest-{}", uuid::Uuid::new_v4()));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
@@ -1121,6 +1332,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
         let out_pack = root.join("pack.zip");
         let out_export = root.join("export.zip");
@@ -1139,7 +1356,10 @@ mod tests {
     fn zip_output_rejects_symlinked_parent_components() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join(format!("fozzy-pack-symlink-parent-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "fozzy-pack-symlink-parent-{}",
+            uuid::Uuid::new_v4()
+        ));
         let run_dir = root.join(".fozzy").join("runs").join("r1");
         std::fs::create_dir_all(&run_dir).expect("mkdir");
         std::fs::write(run_dir.join("report.json"), br#"{"ok":true}"#).expect("report");
@@ -1152,6 +1372,12 @@ mod tests {
             proc_backend: crate::ProcBackend::Scripted,
             fs_backend: crate::FsBackend::Virtual,
             http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
         };
 
         let real_out_dir = root.join("real-out");
@@ -1161,9 +1387,11 @@ mod tests {
         let out_pack = linked_parent.join("pack.zip");
         let out_export = linked_parent.join("export.zip");
 
-        let err_pack = export_reproducer_pack(&cfg, "r1", &out_pack).expect_err("must reject symlink parent");
+        let err_pack =
+            export_reproducer_pack(&cfg, "r1", &out_pack).expect_err("must reject symlink parent");
         assert!(err_pack.to_string().contains("symlinked output path"));
-        let err_export = export_artifacts(&cfg, "r1", &out_export).expect_err("must reject symlink parent");
+        let err_export =
+            export_artifacts(&cfg, "r1", &out_export).expect_err("must reject symlink parent");
         assert!(err_export.to_string().contains("symlinked output path"));
     }
 }
