@@ -380,7 +380,7 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
             failed,
             skipped,
         }),
-        memory: None,
+        memory: aggregate_memory_summary(&test_runs),
         findings,
     };
 
@@ -662,6 +662,22 @@ pub fn replay_trace(
             kind: FindingKind::Checker,
             title: "stale_trace_schema".to_string(),
             message: warning,
+            location: None,
+        });
+    }
+    if let (Some(expected), Some(actual)) = (trace.memory.as_ref(), run.memory.as_ref())
+        && expected.summary != actual.summary
+    {
+        findings.push(Finding {
+            kind: FindingKind::Checker,
+            title: "replay_memory_drift".to_string(),
+            message: format!(
+                "replay memory drift: expected leaked_bytes={} leaked_allocs={}, got leaked_bytes={} leaked_allocs={}",
+                expected.summary.leaked_bytes,
+                expected.summary.leaked_allocs,
+                actual.summary.leaked_bytes,
+                actual.summary.leaked_allocs
+            ),
             location: None,
         });
     }
@@ -989,6 +1005,27 @@ fn scenario_run_signature(run: &ScenarioRun) -> String {
     });
     let encoded = serde_json::to_vec(&payload).unwrap_or_default();
     blake3::hash(&encoded).to_hex().to_string()
+}
+
+fn aggregate_memory_summary(runs: &[ScenarioRun]) -> Option<crate::MemorySummary> {
+    let mut any = false;
+    let mut out = crate::MemorySummary::default();
+    for run in runs {
+        let Some(mem) = run.memory.as_ref() else {
+            continue;
+        };
+        any = true;
+        out.alloc_count = out.alloc_count.saturating_add(mem.summary.alloc_count);
+        out.free_count = out.free_count.saturating_add(mem.summary.free_count);
+        out.failed_alloc_count = out
+            .failed_alloc_count
+            .saturating_add(mem.summary.failed_alloc_count);
+        out.in_use_bytes = out.in_use_bytes.saturating_add(mem.summary.in_use_bytes);
+        out.peak_bytes = out.peak_bytes.max(mem.summary.peak_bytes);
+        out.leaked_bytes = out.leaked_bytes.saturating_add(mem.summary.leaked_bytes);
+        out.leaked_allocs = out.leaked_allocs.saturating_add(mem.summary.leaked_allocs);
+    }
+    if any { Some(out) } else { None }
 }
 
 fn gen_seed() -> u64 {

@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 
 use crate::{
     Config, DistributedInvariant, DistributedStep, ExitStatus, Finding, FindingKind,
-    RecordCollisionPolicy, Reporter, RunIdentity, RunMode, RunSummary, ScenarioFile, ScenarioPath,
-    TraceEvent, TraceFile, wall_time_iso_utc, write_trace_with_policy,
+    MemoryRunReport, MemoryState, RecordCollisionPolicy, Reporter, RunIdentity, RunMode,
+    RunSummary, ScenarioFile, ScenarioPath, TraceEvent, TraceFile, wall_time_iso_utc,
+    write_memory_artifacts, write_trace_with_policy,
 };
 
 use crate::{FozzyError, FozzyResult};
@@ -153,6 +154,11 @@ pub fn explore(
     let (status, findings, events, delivered, decisions) =
         run_explore_inner(&scenario, seed, opt.schedule, opt.steps, opt.time)?;
     let _ = delivered;
+    let memory_report = if opt.memory.track {
+        Some(MemoryState::new(opt.memory.clone()).finalize())
+    } else {
+        None
+    };
 
     let finished_at = wall_time_iso_utc();
     let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
@@ -172,7 +178,7 @@ pub fn explore(
         finished_at,
         duration_ms,
         tests: None,
-        memory: None,
+        memory: memory_report.as_ref().map(|m| m.summary.clone()),
         findings: findings.clone(),
     };
 
@@ -183,6 +189,11 @@ pub fn explore(
         serde_json::to_vec_pretty(&events)?,
     )?;
     crate::write_timeline(&events, &artifacts_dir.join("timeline.json"))?;
+    if let Some(mem) = memory_report.as_ref()
+        && mem.options.artifacts
+    {
+        write_memory_artifacts(mem, &artifacts_dir)?;
+    }
 
     if matches!(opt.reporter, Reporter::Junit) {
         std::fs::write(
@@ -213,6 +224,8 @@ pub fn explore(
             events,
             summary.clone(),
         );
+        let mut trace = trace;
+        trace.memory = memory_report.as_ref().map(|m| m.to_trace());
         let written = write_trace_with_policy(&trace, &out, opt.record_collision)?;
         summary.identity.trace_path = Some(written.to_string_lossy().to_string());
     }
@@ -231,6 +244,14 @@ pub fn replay_explore_trace(config: &Config, trace: &TraceFile) -> FozzyResult<c
 
     let (status, findings, events, _delivered, _decisions) =
         run_explore_replay_inner(&explore.scenario, seed, explore.schedule, &trace.decisions)?;
+    let memory_report = trace.memory.as_ref().map(|m| MemoryRunReport {
+        schema_version: "fozzy.memory_report.v1".to_string(),
+        options: m.options.clone(),
+        summary: m.summary.clone(),
+        leaks: m.leaks.clone(),
+        timeline: Vec::new(),
+        graph: crate::MemoryGraph::default(),
+    });
 
     let artifacts_dir = config.runs_dir().join(&run_id);
     std::fs::create_dir_all(&artifacts_dir)?;
@@ -271,6 +292,11 @@ pub fn replay_explore_trace(config: &Config, trace: &TraceFile) -> FozzyResult<c
         serde_json::to_vec_pretty(&events)?,
     )?;
     crate::write_timeline(&events, &artifacts_dir.join("timeline.json"))?;
+    if let Some(mem) = memory_report.as_ref()
+        && mem.options.artifacts
+    {
+        write_memory_artifacts(mem, &artifacts_dir)?;
+    }
 
     Ok(crate::RunResult { summary })
 }

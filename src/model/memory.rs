@@ -33,7 +33,7 @@ impl Default for MemoryOptions {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct MemorySummary {
     #[serde(rename = "allocCount")]
     pub alloc_count: u64,
