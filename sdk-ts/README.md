@@ -3,7 +3,7 @@
 TypeScript SDK for the `fozzy` Rust CLI.
 
 - Thin wrapper around the binary (no engine logic in TS)
-- Full command parity for `init/test/run/fuzz/explore/replay/shrink/corpus/artifacts/report/doctor/env/version/usage`
+- Full command parity for `init/test/run/fuzz/explore/replay/trace/shrink/corpus/artifacts/report/memory/map/doctor/ci/env/version/usage/schema/validate/full`
 - Streaming helper for long-running commands
 - Scenario builder helpers for `steps` and `distributed` scenario JSON
 - Strict type-safe build with generated declaration file (`dist/index.d.ts`)
@@ -25,6 +25,14 @@ const fx = new Fozzy({ cwd: process.cwd(), json: true });
 
 const run = await fx.run("tests/example.fozzy.json", { det: true, seed: 123 });
 console.log(run.status, run.identity.runId);
+
+const topo = await fx.mapSuites({
+  root: ".",
+  scenarioRoot: "tests",
+  minRisk: 60,
+  profile: "pedantic",
+});
+console.log(topo);
 ```
 
 ## Streaming

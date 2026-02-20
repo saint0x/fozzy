@@ -116,6 +116,7 @@ export interface FuzzOptions {
 }
 
 export type Schedule = "fifo" | "bfs" | "dfs" | "random" | "pct" | "coverage_guided";
+export type TopologyProfile = "balanced" | "pedantic" | "overkill";
 export interface ExploreOptions extends MemoryOptions {
   seed?: number;
   time?: Duration;
@@ -153,6 +154,53 @@ export interface DoctorOptions {
 
 export interface ReportShowOptions {
   format?: Reporter;
+}
+
+export interface CiOptions {
+  flakeRuns?: string[];
+  flakeBudget?: number;
+}
+
+export interface FullOptions {
+  scenarioRoot?: string;
+  seed?: number;
+  doctorRuns?: number;
+  fuzzTime?: Duration;
+  exploreSteps?: number;
+  exploreNodes?: number;
+  allowExpectedFailures?: boolean;
+  scenarioFilter?: string;
+  skipSteps?: string[];
+  requiredSteps?: string[];
+  requireTopologyCoverage?: string;
+  topologyMinRisk?: number;
+  topologyProfile?: TopologyProfile;
+}
+
+export interface MapHotspotsOptions {
+  root?: string;
+  minRisk?: number;
+  limit?: number;
+}
+
+export interface MapServicesOptions {
+  root?: string;
+}
+
+export interface MapSuitesOptions {
+  root?: string;
+  scenarioRoot?: string;
+  minRisk?: number;
+  profile?: TopologyProfile;
+  limit?: number;
+}
+
+export interface MemoryGraphOptions {
+  out?: string;
+}
+
+export interface MemoryTopOptions {
+  limit?: number;
 }
 
 export class Fozzy {
@@ -238,6 +286,24 @@ export class Fozzy {
   async usage(): Promise<unknown> {
     const ex = await this.execOrThrow(["usage"]);
     return parseJson(ex.stdout);
+  }
+
+  async full(opts: FullOptions = {}): Promise<unknown> {
+    const args = ["full"];
+    kv(args, "--scenario-root", opts.scenarioRoot);
+    kv(args, "--seed", opts.seed);
+    kv(args, "--doctor-runs", opts.doctorRuns);
+    kv(args, "--fuzz-time", opts.fuzzTime);
+    kv(args, "--explore-steps", opts.exploreSteps);
+    kv(args, "--explore-nodes", opts.exploreNodes);
+    flag(args, opts.allowExpectedFailures, "--allow-expected-failures");
+    kv(args, "--scenario-filter", opts.scenarioFilter);
+    csv(args, "--skip-steps", opts.skipSteps);
+    csv(args, "--required-steps", opts.requiredSteps);
+    kv(args, "--require-topology-coverage", opts.requireTopologyCoverage);
+    kv(args, "--topology-min-risk", opts.topologyMinRisk);
+    kv(args, "--topology-profile", opts.topologyProfile);
+    return await this.execJson(args);
   }
 
   async test(opts: TestOptions = {}): Promise<RunSummary> {
@@ -341,6 +407,10 @@ export class Fozzy {
     await this.execOrThrow(["corpus", "import", zip, "--out", out]);
   }
 
+  async traceVerify(path: string): Promise<unknown> {
+    return await this.execJson(["trace", "verify", path]);
+  }
+
   async artifactsLs(runOrTrace: string): Promise<unknown> {
     return await this.execJson(["artifacts", "ls", runOrTrace]);
   }
@@ -351,6 +421,10 @@ export class Fozzy {
 
   async artifactsExport(runOrTrace: string, out: string): Promise<void> {
     await this.execOrThrow(["artifacts", "export", runOrTrace, "--out", out]);
+  }
+
+  async artifactsPack(runOrTrace: string, out: string): Promise<void> {
+    await this.execOrThrow(["artifacts", "pack", runOrTrace, "--out", out]);
   }
 
   async reportShow(runOrTrace: string, opts: ReportShowOptions = {}): Promise<unknown> {
@@ -367,6 +441,46 @@ export class Fozzy {
     return await this.execJson(["report", "flaky", ...runs]);
   }
 
+  async memoryGraph(runOrTrace: string, opts: MemoryGraphOptions = {}): Promise<unknown> {
+    const args = ["memory", "graph", runOrTrace];
+    kv(args, "--out", opts.out);
+    return await this.execJson(args);
+  }
+
+  async memoryDiff(leftRunOrTrace: string, rightRunOrTrace: string): Promise<unknown> {
+    return await this.execJson(["memory", "diff", leftRunOrTrace, rightRunOrTrace]);
+  }
+
+  async memoryTop(runOrTrace: string, opts: MemoryTopOptions = {}): Promise<unknown> {
+    const args = ["memory", "top", runOrTrace];
+    kv(args, "--limit", opts.limit);
+    return await this.execJson(args);
+  }
+
+  async mapHotspots(opts: MapHotspotsOptions = {}): Promise<unknown> {
+    const args = ["map", "hotspots"];
+    kv(args, "--root", opts.root);
+    kv(args, "--min-risk", opts.minRisk);
+    kv(args, "--limit", opts.limit);
+    return await this.execJson(args);
+  }
+
+  async mapServices(opts: MapServicesOptions = {}): Promise<unknown> {
+    const args = ["map", "services"];
+    kv(args, "--root", opts.root);
+    return await this.execJson(args);
+  }
+
+  async mapSuites(opts: MapSuitesOptions = {}): Promise<unknown> {
+    const args = ["map", "suites"];
+    kv(args, "--root", opts.root);
+    kv(args, "--scenario-root", opts.scenarioRoot);
+    kv(args, "--min-risk", opts.minRisk);
+    kv(args, "--profile", opts.profile);
+    kv(args, "--limit", opts.limit);
+    return await this.execJson(args);
+  }
+
   async doctor(opts: DoctorOptions = {}): Promise<unknown> {
     const args = ["doctor"];
     flag(args, opts.deep, "--deep");
@@ -380,8 +494,25 @@ export class Fozzy {
     return await this.execJson(["env"]);
   }
 
+  async ci(trace: string, opts: CiOptions = {}): Promise<unknown> {
+    const args = ["ci", trace];
+    for (const run of opts.flakeRuns ?? []) {
+      args.push("--flake-run", run);
+    }
+    kv(args, "--flake-budget", opts.flakeBudget);
+    return await this.execJson(args);
+  }
+
   async version(): Promise<unknown> {
     return await this.execJson(["version"]);
+  }
+
+  async schema(): Promise<unknown> {
+    return await this.execJson(["schema"]);
+  }
+
+  async validate(scenario: string): Promise<unknown> {
+    return await this.execJson(["validate", scenario]);
   }
 
   private globalArgs(): string[] {
@@ -423,6 +554,11 @@ function kv(args: string[], key: string, value: unknown): void {
 
 function flag(args: string[], enabled: unknown, key: string): void {
   if (enabled) args.push(key);
+}
+
+function csv(args: string[], key: string, values: string[] | undefined): void {
+  if (!values || values.length === 0) return;
+  args.push(key, values.join(","));
 }
 
 function appendMemoryArgs(args: string[], opts: MemoryOptions): void {
