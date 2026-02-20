@@ -651,21 +651,31 @@ fn hotspot_hints(h: &MapHotspot) -> Vec<String> {
 }
 
 fn should_skip_path(p: &Path) -> bool {
-    let s = p.to_string_lossy().to_ascii_lowercase();
-    [
-        "/.git/",
-        "/target/",
-        "/node_modules/",
-        "/.fozzy/",
-        "/dist/",
-        "/build/",
-        "/out/",
-        "/coverage/",
-        "/vendor/",
-        "/.next/",
-    ]
-    .iter()
-    .any(|needle| s.contains(needle))
+    let Some(parent) = p.parent() else {
+        return false;
+    };
+    parent.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|segment| {
+                [
+                    ".git",
+                    "target",
+                    "node_modules",
+                    ".fozzy",
+                    "dist",
+                    "build",
+                    "out",
+                    "coverage",
+                    "vendor",
+                    ".next",
+                    ".tmp",
+                ]
+                .iter()
+                .any(|needle| segment.eq_ignore_ascii_case(needle))
+            })
+    })
 }
 
 fn is_candidate_file(p: &Path) -> bool {
@@ -906,5 +916,12 @@ mod tests {
         let overkill = required_suites_for_hotspot(TopologyProfile::Overkill, &signals).len();
         assert!(balanced <= pedantic, "balanced should be least strict");
         assert!(pedantic <= overkill, "overkill should be most strict");
+    }
+
+    #[test]
+    fn should_skip_repo_local_tmp_outputs() {
+        assert!(should_skip_path(Path::new("./.tmp/map.suites.json")));
+        assert!(should_skip_path(Path::new("/repo/.tmp/report.json")));
+        assert!(!should_skip_path(Path::new("./src/map_cmd.rs")));
     }
 }
