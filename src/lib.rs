@@ -26,6 +26,8 @@ mod explore;
 mod fsutil;
 #[path = "modes/fuzz.rs"]
 mod fuzz;
+#[path = "cmd/map_cmd.rs"]
+mod map_cmd;
 #[path = "model/memory.rs"]
 mod memory;
 #[path = "cmd/memory_cmd.rs"]
@@ -62,6 +64,7 @@ pub use error::*;
 pub use explore::*;
 pub use fsutil::*;
 pub use fuzz::*;
+pub use map_cmd::*;
 pub use memory::*;
 pub use memory_cmd::*;
 pub use memorycap::*;

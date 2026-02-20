@@ -35,7 +35,12 @@ pub fn usage_doc() -> UsageDoc {
             UsageItem {
                 command: "fozzy full".to_string(),
                 when: "Run the complete Fozzy surface-area gate with setup guidance and graceful skip behavior for missing inputs.".to_string(),
-                how: "fozzy full --scenario-root tests --seed 1337 --doctor-runs 5 --fuzz-time 2s --explore-steps 200 --explore-nodes 3 --allow-expected-failures --scenario-filter memory --skip-steps fuzz --required-steps usage,version,test_det,run_record_trace,replay,ci,shrink. This command exercises init/test/run/fuzz/explore/replay/trace verify/shrink/corpus/artifacts/report/memory/doctor/ci/env/version/usage with policy controls for mixed scenario sets. Strictest setting: strict mode is on by default; add `--unsafe` only to opt out.".to_string(),
+                how: "fozzy full --scenario-root tests --seed 1337 --doctor-runs 5 --fuzz-time 2s --explore-steps 200 --explore-nodes 3 --allow-expected-failures --scenario-filter memory --skip-steps fuzz --required-steps usage,version,test_det,run_record_trace,replay,ci,shrink --require-topology-coverage . --topology-min-risk 60. This command exercises init/test/run/fuzz/explore/replay/trace verify/shrink/corpus/artifacts/report/memory/map/doctor/ci/env/version/usage with policy controls for mixed scenario sets and can enforce high-risk topology hotspot coverage. Strictest setting: strict mode is on by default; add `--unsafe` only to opt out.".to_string(),
+            },
+            UsageItem {
+                command: "fozzy map".to_string(),
+                when: "Generate a language-agnostic code-topology map (hotspots, service boundaries, and granular suite recommendations).".to_string(),
+                how: "fozzy map hotspots --root . --min-risk 60 --limit 50 --json; fozzy map services --root . --json; fozzy map suites --root . --scenario-root tests --min-risk 60 --json. Use this output to ensure each high-risk code area has dedicated run/fuzz/explore/replay/ci coverage.".to_string(),
             },
             UsageItem {
                 command: "fozzy init".to_string(),

@@ -13,15 +13,16 @@ use cli_logger::CliLogger;
 use fozzy::{
     ArtifactCommand, CiOptions, Config, CorpusCommand, ExitStatus, ExploreOptions, FlakeBudget,
     FozzyDuration, FsBackend, FuzzMode, FuzzOptions, FuzzTarget, HttpBackend, InitTemplate,
-    InitTestType, MemoryCommand, MemoryOptions, ProcBackend, RecordCollisionPolicy, ReportCommand,
-    Reporter, RunOptions, RunSummary, ScenarioPath, ScheduleStrategy, ShrinkMinimize, TracePath,
+    InitTestType, MapCommand, MapSuitesOptions, MemoryCommand, MemoryOptions, ProcBackend,
+    RecordCollisionPolicy, ReportCommand, Reporter, RunOptions, RunSummary, ScenarioPath,
+    ScheduleStrategy, ShrinkMinimize, TracePath,
 };
 
 #[derive(Debug, Parser)]
 #[command(name = "fozzy")]
 #[command(about = "deterministic full-stack testing + fuzzing + distributed exploration")]
 #[command(
-    after_help = "Execution policy: use the full command surface by default (run/test/fuzz/explore/replay/shrink/trace verify/ci/report/artifacts/memory/doctor/corpus/env/version/usage). Use `fozzy full` to run the end-to-end gate automatically; use `--unsafe` only when intentionally relaxing checks."
+    after_help = "Execution policy: use the full command surface by default (run/test/fuzz/explore/replay/shrink/trace verify/ci/report/artifacts/memory/map/doctor/corpus/env/version/usage). Use `fozzy full` to run the end-to-end gate automatically; use `--unsafe` only when intentionally relaxing checks."
 )]
 struct Cli {
     /// Path to config file. Missing configs are treated as "defaults".
@@ -391,6 +392,12 @@ enum Command {
         command: MemoryCommand,
     },
 
+    /// Analyze repository topology and hotspot candidates for granular Fozzy suites
+    Map {
+        #[command(subcommand)]
+        command: MapCommand,
+    },
+
     /// Diagnose nondeterminism + environment issues
     Doctor {
         #[arg(long)]
@@ -478,6 +485,14 @@ enum Command {
         /// If set, only these full steps are considered required (others are marked skipped).
         #[arg(long, value_delimiter = ',')]
         required_steps: Vec<String>,
+
+        /// Require coverage for high-risk topology hotspots (pass repo root path to analyze).
+        #[arg(long)]
+        require_topology_coverage: Option<PathBuf>,
+
+        /// Minimum hotspot risk score (0-100) considered required for topology coverage.
+        #[arg(long, default_value_t = 60)]
+        topology_min_risk: u8,
     },
 }
 
@@ -979,6 +994,12 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Map { command } => {
+            let out = fozzy::map_command(config, command)?;
+            logger.print_serialized(&out)?;
+            Ok(ExitCode::SUCCESS)
+        }
+
         Command::Doctor {
             deep,
             scenario,
@@ -1098,6 +1119,8 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             scenario_filter,
             skip_steps,
             required_steps,
+            require_topology_coverage,
+            topology_min_risk,
         } => {
             let report = run_full_command(
                 config,
@@ -1113,6 +1136,8 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
                 scenario_filter.as_deref(),
                 skip_steps,
                 required_steps,
+                require_topology_coverage.as_deref(),
+                *topology_min_risk,
             )?;
             let has_failed = report
                 .steps
@@ -1143,6 +1168,8 @@ fn run_full_command(
     scenario_filter: Option<&str>,
     skip_steps: &[String],
     required_steps: &[String],
+    require_topology_coverage: Option<&Path>,
+    topology_min_risk: u8,
 ) -> anyhow::Result<FullReport> {
     let mut steps = Vec::<FullStepResult>::new();
     let mut push = |name: &str, status: FullStepStatus, detail: String| {
@@ -1245,6 +1272,43 @@ fn run_full_command(
             "Fix malformed scenarios before trusting `fozzy full` coverage: {}",
             discovered.parse_errors.join(" | ")
         ));
+    }
+
+    if let Some(root) = require_topology_coverage {
+        match fozzy::map_suites(&MapSuitesOptions {
+            root: root.to_path_buf(),
+            scenario_root: scenario_root.to_path_buf(),
+            min_risk: topology_min_risk,
+            limit: 200,
+        }) {
+            Ok(report) => {
+                let ok = report.uncovered_hotspot_count == 0;
+                push(
+                    "topology_coverage",
+                    if ok {
+                        FullStepStatus::Passed
+                    } else {
+                        FullStepStatus::Failed
+                    },
+                    format!(
+                        "required_hotspots={} covered={} uncovered={} min_risk={} root={} scenario_root={}",
+                        report.required_hotspot_count,
+                        report.covered_hotspot_count,
+                        report.uncovered_hotspot_count,
+                        report.min_risk,
+                        root.display(),
+                        scenario_root.display()
+                    ),
+                );
+            }
+            Err(err) => push("topology_coverage", FullStepStatus::Failed, err.to_string()),
+        }
+    } else {
+        push(
+            "topology_coverage",
+            FullStepStatus::Skipped,
+            "not requested (use --require-topology-coverage <repo_root>)".to_string(),
+        );
     }
 
     let pick_step = discovered

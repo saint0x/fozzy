@@ -53,6 +53,7 @@ Execution policy: use the full command surface by default. Skip commands only wh
 | `artifacts` | List/diff/export run artifacts | `fozzy artifacts pack <runId> --out pack.zip` |
 | `report` | Render/query reports | `fozzy report show <runId> --format json` |
 | `memory` | Inspect memory graph/diff/top leaks | `fozzy memory top <runId|trace>` |
+| `map` | Build language-agnostic topology/hotspot/suite maps | `fozzy map suites --root . --scenario-root tests --json` |
 | `doctor` | Diagnose determinism/env issues | `fozzy doctor --deep --scenario tests/example.fozzy.json` |
 | `ci` | Run local gate bundle for a trace | `fozzy ci trace.fozzy --flake-run r1 --flake-run r2 --flake-budget 5` |
 | `env` | Print runtime capability info | `fozzy env --json` |
@@ -79,13 +80,15 @@ Generated files include starter scenarios plus `tests/INIT_GUIDE.md` with comman
 fozzy full [--scenario-root <dir>] [--seed <n>] [--doctor-runs <n>] \
   [--fuzz-time <dur>] [--explore-steps <n>] [--explore-nodes <n>] \
   [--allow-expected-failures] [--scenario-filter <substring>] \
-  [--skip-steps <comma,list>] [--required-steps <comma,list>]
+  [--skip-steps <comma,list>] [--required-steps <comma,list>] \
+  [--require-topology-coverage <repo_root>] [--topology-min-risk <0..100>]
 ```
 
 `fozzy full` is the hand-holding end-to-end gate. It targets the full CLI surface:
 `init`, `test`, `run`, `fuzz`, `explore`, `replay`, `trace verify`, `shrink`, `corpus`, `artifacts`, `report`, `memory`, `doctor`, `ci`, `env`, `version`, `usage`.
 If a required input is missing (for example no distributed scenario), it records a graceful skip instead of crashing.
 Use `--allow-expected-failures` for mixed pass/fail scenario roots where fail-class replay parity is expected, and use `--scenario-filter`/step policies to scope CI contracts.
+Use `--require-topology-coverage` to enforce that high-risk hotspot areas from `fozzy map suites` have matching scenario coverage.
 Strictest setting suggestion: strict mode is already on by default; pass `--unsafe` only when intentionally relaxing checks.
 
 ### `test`
@@ -221,6 +224,17 @@ fozzy memory top <run-id|trace> [--limit <n>]
 Strictest setting suggestion: strict mode is already on by default; pass `--unsafe` only when intentionally relaxing checks.
 Run selectors also support aliases: `latest`, `last-pass`, `last-fail`.
 For race-sensitive CI automation, prefer explicit `runId` or trace paths over aliases.
+
+### `map`
+
+```bash
+fozzy map hotspots [--root <repo>] [--min-risk <0..100>] [--limit <n>]
+fozzy map services [--root <repo>]
+fozzy map suites [--root <repo>] [--scenario-root <dir>] [--min-risk <0..100>] [--limit <n>]
+```
+
+`map` is language-agnostic and derives risk hotspots from control-flow density, concurrency indicators, external side-effect boundaries, failure/timeout/retry logic, and entrypoint/service signals.
+Use `map suites` to find high-risk hotspots lacking dedicated scenario coverage and drive granular Fozzy suite generation.
 
 ### `doctor`
 

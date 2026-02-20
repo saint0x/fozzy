@@ -1324,3 +1324,121 @@ fn validate_returns_non_zero_with_actionable_parse_diagnostics() {
         "expected schema guidance in validate error, got: {msg}"
     );
 }
+
+#[test]
+fn map_hotspots_services_and_suites_emit_expected_schema() {
+    let ws = temp_workspace("map-schema");
+    let services_dir = ws.join("services").join("payments");
+    let tests_dir = ws.join("tests");
+    std::fs::create_dir_all(&services_dir).expect("services dir");
+    std::fs::create_dir_all(&tests_dir).expect("tests dir");
+    std::fs::write(
+        services_dir.join("handler.rs"),
+        r#"
+        async fn handle_payment() {
+            if retry { tokio::spawn(async move {}); }
+            let _ = std::fs::read("config.toml");
+            if timeout { panic!("failed"); }
+        }
+        "#,
+    )
+    .expect("write source");
+    std::fs::write(
+        tests_dir.join("handler.fozzy.json"),
+        r#"{"version":1,"name":"handler","steps":[{"type":"trace_event","name":"x"}]}"#,
+    )
+    .expect("write scenario");
+
+    let root = ws.to_string_lossy().to_string();
+    let scenario_root = tests_dir.to_string_lossy().to_string();
+
+    let hotspots = run_cli(&[
+        "map".into(),
+        "hotspots".into(),
+        "--root".into(),
+        root.clone(),
+        "--min-risk".into(),
+        "1".into(),
+        "--limit".into(),
+        "20".into(),
+        "--json".into(),
+    ]);
+    assert_eq!(
+        hotspots.status.code(),
+        Some(0),
+        "map hotspots stderr={}",
+        String::from_utf8_lossy(&hotspots.stderr)
+    );
+    let hotspots_doc = parse_json_stdout(&hotspots);
+    assert_eq!(
+        hotspots_doc
+            .get("schemaVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+        "fozzy.map_hotspots.v1"
+    );
+    assert!(
+        hotspots_doc
+            .get("hotspots")
+            .and_then(|v| v.as_array())
+            .is_some_and(|v| !v.is_empty())
+    );
+
+    let services = run_cli(&[
+        "map".into(),
+        "services".into(),
+        "--root".into(),
+        root.clone(),
+        "--json".into(),
+    ]);
+    assert_eq!(
+        services.status.code(),
+        Some(0),
+        "map services stderr={}",
+        String::from_utf8_lossy(&services.stderr)
+    );
+    let services_doc = parse_json_stdout(&services);
+    assert_eq!(
+        services_doc
+            .get("schemaVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+        "fozzy.map_services.v1"
+    );
+
+    let suites = run_cli(&[
+        "map".into(),
+        "suites".into(),
+        "--root".into(),
+        root,
+        "--scenario-root".into(),
+        scenario_root,
+        "--min-risk".into(),
+        "1".into(),
+        "--json".into(),
+    ]);
+    assert_eq!(
+        suites.status.code(),
+        Some(0),
+        "map suites stderr={}",
+        String::from_utf8_lossy(&suites.stderr)
+    );
+    let suites_doc = parse_json_stdout(&suites);
+    assert_eq!(
+        suites_doc
+            .get("schemaVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+        "fozzy.map_suites.v1"
+    );
+    assert!(
+        suites_doc
+            .get("requiredHotspotCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            >= suites_doc
+                .get("coveredHotspotCount")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+    );
+}
