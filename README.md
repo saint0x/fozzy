@@ -3,7 +3,7 @@
 Fozzy is a deterministic testing engine for systems code.
 It provides one Rust-native runtime and one CLI for test execution, fuzzing, distributed schedule exploration, replay, and shrinking.
 
-## Why Teams Use Fozzy
+## Why use Fozzy
 
 Fozzy is designed to catch and debug high-cost failures that traditional test runners miss:
 
@@ -17,7 +17,7 @@ Fozzy is designed to catch and debug high-cost failures that traditional test ru
 
 Result: every failure can be recorded, replayed, minimized, and shared as a reproducible artifact.
 
-## Core Product Guarantees
+## Core Guarantees
 
 - Deterministic runtime in `--det` mode (seeded RNG, virtual time, decision logging).
 - Replay-safe trace model (`.fozzy`) with schema/version + checksum integrity support.
