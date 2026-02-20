@@ -61,6 +61,7 @@ fozzy env --json
 - `fozzy memory`: inspect memory graphs, leak tops, and memory diffs.
 - `fozzy artifacts`: list/export/pack run artifacts.
 - `fozzy map`: language-agnostic code topology mapping for hotspot-driven suite planning.
+  `fozzy map suites` defaults to a `pedantic` coverage profile.
 
 Full command contract: [CLI.md](CLI.md)
 

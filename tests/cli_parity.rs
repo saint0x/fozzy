@@ -1375,7 +1375,7 @@ fn map_hotspots_services_and_suites_emit_expected_schema() {
             .get("schemaVersion")
             .and_then(|v| v.as_str())
             .unwrap_or_default(),
-        "fozzy.map_hotspots.v1"
+        "fozzy.map_hotspots.v2"
     );
     assert!(
         hotspots_doc
@@ -1403,7 +1403,7 @@ fn map_hotspots_services_and_suites_emit_expected_schema() {
             .get("schemaVersion")
             .and_then(|v| v.as_str())
             .unwrap_or_default(),
-        "fozzy.map_services.v1"
+        "fozzy.map_services.v2"
     );
 
     let suites = run_cli(&[
@@ -1429,7 +1429,14 @@ fn map_hotspots_services_and_suites_emit_expected_schema() {
             .get("schemaVersion")
             .and_then(|v| v.as_str())
             .unwrap_or_default(),
-        "fozzy.map_suites.v1"
+        "fozzy.map_suites.v2"
+    );
+    assert_eq!(
+        suites_doc
+            .get("profile")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+        "pedantic"
     );
     assert!(
         suites_doc

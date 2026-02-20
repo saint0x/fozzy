@@ -1,12 +1,28 @@
 //! Topology and hotspot mapping commands (`fozzy map ...`).
 
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::{Config, FozzyError, FozzyResult};
+
+const SUITE_TEST_DET: &str = "test_det";
+const SUITE_RUN_REPLAY_CI: &str = "run_record_replay_ci";
+const SUITE_FUZZ: &str = "fuzz_inputs";
+const SUITE_EXPLORE: &str = "explore_schedule_faults";
+const SUITE_HOST: &str = "host_backends_run";
+const SUITE_MEMORY: &str = "memory_graph_diff_top";
+const SUITE_SHRINK: &str = "shrink_failure_trace";
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ValueEnum, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TopologyProfile {
+    Balanced,
+    Pedantic,
+    Overkill,
+}
 
 #[derive(Debug, Subcommand)]
 pub enum MapCommand {
@@ -32,6 +48,8 @@ pub enum MapCommand {
         scenario_root: PathBuf,
         #[arg(long, default_value_t = 60)]
         min_risk: u8,
+        #[arg(long, default_value = "pedantic")]
+        profile: TopologyProfile,
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
@@ -68,8 +86,11 @@ pub struct MapSuitesReport {
     pub scenario_root: String,
     #[serde(rename = "scannedFiles")]
     pub scanned_files: usize,
-    #[serde(rename = "minRisk")]
-    pub min_risk: u8,
+    pub profile: TopologyProfile,
+    #[serde(rename = "baseMinRisk")]
+    pub base_min_risk: u8,
+    #[serde(rename = "effectiveMinRisk")]
+    pub effective_min_risk: u8,
     #[serde(rename = "scenarioCount")]
     pub scenario_count: usize,
     #[serde(rename = "requiredHotspotCount")]
@@ -135,10 +156,19 @@ pub struct SuiteRecommendation {
     pub path: String,
     #[serde(rename = "riskScore")]
     pub risk_score: u8,
-    pub required: bool,
+    #[serde(rename = "requiredByPolicy")]
+    pub required_by_policy: bool,
     pub covered: bool,
     #[serde(rename = "coverageHints")]
     pub coverage_hints: Vec<String>,
+    #[serde(rename = "requiredSuites")]
+    pub required_suites: Vec<String>,
+    #[serde(rename = "coveredSuites")]
+    pub covered_suites: Vec<String>,
+    #[serde(rename = "missingRequiredSuites")]
+    pub missing_required_suites: Vec<String>,
+    #[serde(rename = "whyRequired")]
+    pub why_required: Vec<String>,
     pub reasons: Vec<String>,
     #[serde(rename = "recommendedSuites")]
     pub recommended_suites: Vec<String>,
@@ -149,6 +179,7 @@ pub struct MapSuitesOptions {
     pub root: PathBuf,
     pub scenario_root: PathBuf,
     pub min_risk: u8,
+    pub profile: TopologyProfile,
     pub limit: usize,
 }
 
@@ -167,6 +198,16 @@ struct ScanRecord {
     signal: HotspotSignals,
     risk_score: u8,
     reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScenarioFact {
+    haystack: String,
+    has_explore: bool,
+    has_fuzz: bool,
+    has_host: bool,
+    has_memory: bool,
+    has_failure: bool,
 }
 
 pub fn map_command(_config: &Config, command: &MapCommand) -> FozzyResult<serde_json::Value> {
@@ -189,7 +230,7 @@ pub fn map_command(_config: &Config, command: &MapCommand) -> FozzyResult<serde_
             });
             hotspots.truncate(*limit);
             Ok(serde_json::to_value(MapHotspotsReport {
-                schema_version: "fozzy.map_hotspots.v1".to_string(),
+                schema_version: "fozzy.map_hotspots.v2".to_string(),
                 root: facts.root.display().to_string(),
                 scanned_files: facts.scanned_files,
                 min_risk: *min_risk,
@@ -199,7 +240,7 @@ pub fn map_command(_config: &Config, command: &MapCommand) -> FozzyResult<serde_
         MapCommand::Services { root } => {
             let facts = scan_repo(root)?;
             Ok(serde_json::to_value(MapServicesReport {
-                schema_version: "fozzy.map_services.v1".to_string(),
+                schema_version: "fozzy.map_services.v2".to_string(),
                 root: facts.root.display().to_string(),
                 scanned_files: facts.scanned_files,
                 services: facts.services,
@@ -209,12 +250,14 @@ pub fn map_command(_config: &Config, command: &MapCommand) -> FozzyResult<serde_
             root,
             scenario_root,
             min_risk,
+            profile,
             limit,
         } => {
             let report = map_suites(&MapSuitesOptions {
                 root: root.clone(),
                 scenario_root: scenario_root.clone(),
                 min_risk: *min_risk,
+                profile: *profile,
                 limit: *limit,
             })?;
             Ok(serde_json::to_value(report)?)
@@ -225,57 +268,249 @@ pub fn map_command(_config: &Config, command: &MapCommand) -> FozzyResult<serde_
 pub fn map_suites(opt: &MapSuitesOptions) -> FozzyResult<MapSuitesReport> {
     let facts = scan_repo(&opt.root)?;
     let scenario_files = discover_scenarios(&opt.scenario_root)?;
-    let scenario_haystack: Vec<String> = scenario_files
-        .iter()
-        .map(|p| p.to_string_lossy().to_ascii_lowercase())
-        .collect();
+    let scenario_facts = build_scenario_facts(&scenario_files);
 
+    let effective_min_risk = effective_min_risk(opt.min_risk, opt.profile);
     let mut suites = Vec::<SuiteRecommendation>::new();
     let mut required_hotspot_count = 0usize;
     let mut covered_hotspot_count = 0usize;
+
     for hotspot in facts.hotspots {
-        let required = hotspot.risk_score >= opt.min_risk;
-        if required {
+        let hints = hotspot_hints(&hotspot);
+        let required_by_policy = hotspot.risk_score >= effective_min_risk;
+        if required_by_policy {
             required_hotspot_count += 1;
         }
-        let hints = hotspot_hints(&hotspot);
-        let covered = hints
+
+        let required_suites = required_suites_for_hotspot(opt.profile, &hotspot.signals);
+        let covered_suites = covered_suites_for_hotspot(&required_suites, &hints, &scenario_facts);
+        let missing_required_suites = required_suites
             .iter()
-            .any(|hint| scenario_haystack.iter().any(|s| s.contains(hint)));
-        if required && covered {
+            .filter(|s| !covered_suites.contains(*s))
+            .cloned()
+            .collect::<Vec<_>>();
+        let covered = !required_by_policy || missing_required_suites.is_empty();
+        if required_by_policy && covered {
             covered_hotspot_count += 1;
         }
+
+        let why_required = why_required(hotspot.risk_score, effective_min_risk, &hotspot.signals);
+        let mut recommended = required_suites.clone();
+        for extra in recommended_suites_for_hotspot(&hotspot.signals) {
+            if !recommended.contains(&extra) {
+                recommended.push(extra);
+            }
+        }
+
         suites.push(SuiteRecommendation {
             hotspot_id: hotspot.id,
             component: hotspot.component,
             path: hotspot.path,
             risk_score: hotspot.risk_score,
-            required,
+            required_by_policy,
             covered,
             coverage_hints: hints,
+            required_suites,
+            covered_suites,
+            missing_required_suites,
+            why_required,
             reasons: hotspot.reasons,
-            recommended_suites: hotspot.recommended_suites,
+            recommended_suites: recommended,
         });
     }
+
     suites.sort_by(|a, b| {
         b.risk_score
             .cmp(&a.risk_score)
             .then_with(|| a.path.cmp(&b.path))
     });
     suites.truncate(opt.limit);
+
     let uncovered_hotspot_count = required_hotspot_count.saturating_sub(covered_hotspot_count);
 
     Ok(MapSuitesReport {
-        schema_version: "fozzy.map_suites.v1".to_string(),
+        schema_version: "fozzy.map_suites.v2".to_string(),
         root: facts.root.display().to_string(),
         scenario_root: opt.scenario_root.display().to_string(),
         scanned_files: facts.scanned_files,
-        min_risk: opt.min_risk,
+        profile: opt.profile,
+        base_min_risk: opt.min_risk,
+        effective_min_risk,
         scenario_count: scenario_files.len(),
         required_hotspot_count,
         covered_hotspot_count,
         uncovered_hotspot_count,
         suites,
+    })
+}
+
+fn effective_min_risk(base: u8, profile: TopologyProfile) -> u8 {
+    match profile {
+        TopologyProfile::Balanced => base.saturating_add(15).min(100),
+        TopologyProfile::Pedantic => base.saturating_sub(5),
+        TopologyProfile::Overkill => base.saturating_sub(15),
+    }
+}
+
+fn required_suites_for_hotspot(profile: TopologyProfile, s: &HotspotSignals) -> Vec<String> {
+    let mut out = BTreeSet::<String>::new();
+    out.insert(SUITE_TEST_DET.to_string());
+    out.insert(SUITE_RUN_REPLAY_CI.to_string());
+
+    match profile {
+        TopologyProfile::Balanced => {
+            if s.concurrency_signals > 0 {
+                out.insert(SUITE_EXPLORE.to_string());
+            }
+            if s.external_signals > 0 {
+                out.insert(SUITE_HOST.to_string());
+            }
+            if s.failure_signals > 0 {
+                out.insert(SUITE_SHRINK.to_string());
+            }
+            if s.memory_signals > 2 {
+                out.insert(SUITE_MEMORY.to_string());
+            }
+            if s.branch_signals > 20 {
+                out.insert(SUITE_FUZZ.to_string());
+            }
+        }
+        TopologyProfile::Pedantic => {
+            out.insert(SUITE_SHRINK.to_string());
+            if s.concurrency_signals > 0 || s.failure_signals >= 4 {
+                out.insert(SUITE_EXPLORE.to_string());
+            }
+            if s.external_signals > 0 || s.entrypoint_signals > 0 {
+                out.insert(SUITE_HOST.to_string());
+            }
+            if s.memory_signals > 0 {
+                out.insert(SUITE_MEMORY.to_string());
+            }
+            if s.branch_signals > 6 || s.failure_signals > 0 {
+                out.insert(SUITE_FUZZ.to_string());
+            }
+        }
+        TopologyProfile::Overkill => {
+            out.insert(SUITE_FUZZ.to_string());
+            out.insert(SUITE_EXPLORE.to_string());
+            out.insert(SUITE_HOST.to_string());
+            out.insert(SUITE_MEMORY.to_string());
+            out.insert(SUITE_SHRINK.to_string());
+        }
+    }
+
+    out.into_iter().collect()
+}
+
+fn recommended_suites_for_hotspot(s: &HotspotSignals) -> Vec<String> {
+    let mut out = BTreeSet::<String>::new();
+    out.insert(SUITE_TEST_DET.to_string());
+    out.insert(SUITE_RUN_REPLAY_CI.to_string());
+    if s.concurrency_signals > 0 {
+        out.insert(SUITE_EXPLORE.to_string());
+    }
+    if s.external_signals > 0 {
+        out.insert(SUITE_HOST.to_string());
+    }
+    if s.failure_signals > 0 {
+        out.insert(SUITE_SHRINK.to_string());
+    }
+    if s.memory_signals > 0 {
+        out.insert(SUITE_MEMORY.to_string());
+    }
+    if s.branch_signals > 8 {
+        out.insert(SUITE_FUZZ.to_string());
+    }
+    out.into_iter().collect()
+}
+
+fn why_required(risk: u8, threshold: u8, s: &HotspotSignals) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    if risk >= threshold {
+        out.push(format!("risk_score {} >= threshold {}", risk, threshold));
+    }
+    if s.concurrency_signals > 0 {
+        out.push("concurrency hotspot".to_string());
+    }
+    if s.external_signals > 0 {
+        out.push("external side-effects present".to_string());
+    }
+    if s.failure_signals > 0 {
+        out.push("failure/retry/timeout behavior present".to_string());
+    }
+    if s.memory_signals > 0 {
+        out.push("memory behavior present".to_string());
+    }
+    out
+}
+
+fn covered_suites_for_hotspot(
+    required: &[String],
+    hints: &[String],
+    scenarios: &[ScenarioFact],
+) -> Vec<String> {
+    required
+        .iter()
+        .filter(|suite| {
+            scenarios
+                .iter()
+                .any(|s| matches_suite_signal(s, suite.as_str()) && matches_hints(s, hints))
+        })
+        .cloned()
+        .collect()
+}
+
+fn matches_hints(s: &ScenarioFact, hints: &[String]) -> bool {
+    hints.iter().any(|h| s.haystack.contains(h))
+}
+
+fn matches_suite_signal(s: &ScenarioFact, suite: &str) -> bool {
+    match suite {
+        SUITE_TEST_DET => true,
+        SUITE_RUN_REPLAY_CI => true,
+        SUITE_FUZZ => s.has_fuzz,
+        SUITE_EXPLORE => s.has_explore,
+        SUITE_HOST => s.has_host,
+        SUITE_MEMORY => s.has_memory,
+        SUITE_SHRINK => s.has_failure,
+        _ => false,
+    }
+}
+
+fn build_scenario_facts(paths: &[PathBuf]) -> Vec<ScenarioFact> {
+    paths.iter().filter_map(|p| scenario_fact(p).ok()).collect()
+}
+
+fn scenario_fact(path: &Path) -> FozzyResult<ScenarioFact> {
+    let content = std::fs::read_to_string(path)?;
+    let lower = content.to_ascii_lowercase();
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let haystack = format!("{} {}", path.to_string_lossy().to_ascii_lowercase(), lower);
+
+    let has_explore = name.contains("explore") || lower.contains("\"distributed\"");
+    let has_fuzz = name.contains("fuzz") || lower.contains("\"mode\":\"fuzz\"");
+    let has_host = name.contains("host")
+        || lower.contains("proc_spawn")
+        || lower.contains("http_request")
+        || lower.contains("fs_write");
+    let has_memory = name.contains("memory") || lower.contains("memory_");
+    let has_failure = name.contains("fail")
+        || name.contains("timeout")
+        || name.contains("panic")
+        || lower.contains("\"type\":\"fail\"")
+        || lower.contains("\"type\":\"panic\"");
+
+    Ok(ScenarioFact {
+        haystack,
+        has_explore,
+        has_fuzz,
+        has_host,
+        has_memory,
+        has_failure,
     })
 }
 
@@ -328,7 +563,7 @@ fn scan_repo(root: &Path) -> FozzyResult<RepoFacts> {
             risk_score: rec.risk_score,
             reasons: rec.reasons.clone(),
             signals: rec.signal.clone(),
-            recommended_suites: recommended_suites(&rec.signal),
+            recommended_suites: recommended_suites_for_hotspot(&rec.signal),
         });
     }
     hotspots.sort_by(|a, b| {
@@ -347,6 +582,7 @@ fn scan_repo(root: &Path) -> FozzyResult<RepoFacts> {
         e.2 += rec.signal.external_signals;
         e.3 += rec.signal.concurrency_signals;
     }
+
     let mut services = Vec::<ServiceBoundary>::new();
     for (name, (file_count, entrypoint, external, concurrency)) in by_component {
         if file_count < 2 {
@@ -361,7 +597,7 @@ fn scan_repo(root: &Path) -> FozzyResult<RepoFacts> {
         };
         services.push(ServiceBoundary {
             path: name.clone(),
-            name: name.clone(),
+            name,
             kind: kind.to_string(),
             file_count,
             entrypoint_signals: entrypoint,
@@ -547,8 +783,7 @@ fn score_signals(s: &HotspotSignals) -> (u8, Vec<String>) {
     let mut reasons = Vec::<String>::new();
     let mut score = 0usize;
 
-    let complexity_points = s.branch_signals.min(30);
-    score += complexity_points;
+    score += s.branch_signals.min(30);
     if s.branch_signals > 8 {
         reasons.push(format!("high branch density ({})", s.branch_signals));
     }
@@ -592,29 +827,6 @@ fn score_signals(s: &HotspotSignals) -> (u8, Vec<String>) {
     }
 
     (score.min(100) as u8, reasons)
-}
-
-fn recommended_suites(s: &HotspotSignals) -> Vec<String> {
-    let mut out = BTreeSet::<String>::new();
-    out.insert("test_det".to_string());
-    out.insert("run_record_replay_ci".to_string());
-
-    if s.concurrency_signals > 0 {
-        out.insert("explore_schedule_faults".to_string());
-    }
-    if s.external_signals > 0 {
-        out.insert("host_backends_run".to_string());
-    }
-    if s.failure_signals > 0 {
-        out.insert("shrink_failure_trace".to_string());
-    }
-    if s.memory_signals > 2 {
-        out.insert("memory_graph_diff_top".to_string());
-    }
-    if s.branch_signals > 10 {
-        out.insert("fuzz_inputs".to_string());
-    }
-    out.into_iter().collect()
 }
 
 fn component_for_path(rel: &Path) -> String {
@@ -670,10 +882,29 @@ mod tests {
             root: root.clone(),
             scenario_root: tests.clone(),
             min_risk: 10,
+            profile: TopologyProfile::Pedantic,
             limit: 50,
         })
         .expect("map suites");
         assert!(report.required_hotspot_count > 0);
         assert!(report.uncovered_hotspot_count > 0);
+    }
+
+    #[test]
+    fn profiles_are_progressively_stricter() {
+        let signals = HotspotSignals {
+            line_count: 300,
+            branch_signals: 10,
+            concurrency_signals: 1,
+            external_signals: 1,
+            failure_signals: 1,
+            memory_signals: 1,
+            entrypoint_signals: 1,
+        };
+        let balanced = required_suites_for_hotspot(TopologyProfile::Balanced, &signals).len();
+        let pedantic = required_suites_for_hotspot(TopologyProfile::Pedantic, &signals).len();
+        let overkill = required_suites_for_hotspot(TopologyProfile::Overkill, &signals).len();
+        assert!(balanced <= pedantic, "balanced should be least strict");
+        assert!(pedantic <= overkill, "overkill should be most strict");
     }
 }

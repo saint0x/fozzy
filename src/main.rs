@@ -15,7 +15,7 @@ use fozzy::{
     FozzyDuration, FsBackend, FuzzMode, FuzzOptions, FuzzTarget, HttpBackend, InitTemplate,
     InitTestType, MapCommand, MapSuitesOptions, MemoryCommand, MemoryOptions, ProcBackend,
     RecordCollisionPolicy, ReportCommand, Reporter, RunOptions, RunSummary, ScenarioPath,
-    ScheduleStrategy, ShrinkMinimize, TracePath,
+    ScheduleStrategy, ShrinkMinimize, TopologyProfile, TracePath,
 };
 
 #[derive(Debug, Parser)]
@@ -493,6 +493,10 @@ enum Command {
         /// Minimum hotspot risk score (0-100) considered required for topology coverage.
         #[arg(long, default_value_t = 60)]
         topology_min_risk: u8,
+
+        /// Topology strictness profile used when checking coverage.
+        #[arg(long, default_value = "pedantic")]
+        topology_profile: TopologyProfile,
     },
 }
 
@@ -1121,6 +1125,7 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             required_steps,
             require_topology_coverage,
             topology_min_risk,
+            topology_profile,
         } => {
             let report = run_full_command(
                 config,
@@ -1138,6 +1143,7 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
                 required_steps,
                 require_topology_coverage.as_deref(),
                 *topology_min_risk,
+                *topology_profile,
             )?;
             let has_failed = report
                 .steps
@@ -1170,6 +1176,7 @@ fn run_full_command(
     required_steps: &[String],
     require_topology_coverage: Option<&Path>,
     topology_min_risk: u8,
+    topology_profile: TopologyProfile,
 ) -> anyhow::Result<FullReport> {
     let mut steps = Vec::<FullStepResult>::new();
     let mut push = |name: &str, status: FullStepStatus, detail: String| {
@@ -1279,6 +1286,7 @@ fn run_full_command(
             root: root.to_path_buf(),
             scenario_root: scenario_root.to_path_buf(),
             min_risk: topology_min_risk,
+            profile: topology_profile,
             limit: 200,
         }) {
             Ok(report) => {
@@ -1291,11 +1299,12 @@ fn run_full_command(
                         FullStepStatus::Failed
                     },
                     format!(
-                        "required_hotspots={} covered={} uncovered={} min_risk={} root={} scenario_root={}",
+                        "required_hotspots={} covered={} uncovered={} min_risk={} profile={} root={} scenario_root={}",
                         report.required_hotspot_count,
                         report.covered_hotspot_count,
                         report.uncovered_hotspot_count,
-                        report.min_risk,
+                        report.effective_min_risk,
+                        format!("{:?}", report.profile).to_lowercase(),
                         root.display(),
                         scenario_root.display()
                     ),

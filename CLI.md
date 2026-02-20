@@ -81,14 +81,15 @@ fozzy full [--scenario-root <dir>] [--seed <n>] [--doctor-runs <n>] \
   [--fuzz-time <dur>] [--explore-steps <n>] [--explore-nodes <n>] \
   [--allow-expected-failures] [--scenario-filter <substring>] \
   [--skip-steps <comma,list>] [--required-steps <comma,list>] \
-  [--require-topology-coverage <repo_root>] [--topology-min-risk <0..100>]
+  [--require-topology-coverage <repo_root>] [--topology-min-risk <0..100>] \
+  [--topology-profile <balanced|pedantic|overkill>]
 ```
 
 `fozzy full` is the hand-holding end-to-end gate. It targets the full CLI surface:
 `init`, `test`, `run`, `fuzz`, `explore`, `replay`, `trace verify`, `shrink`, `corpus`, `artifacts`, `report`, `memory`, `doctor`, `ci`, `env`, `version`, `usage`.
 If a required input is missing (for example no distributed scenario), it records a graceful skip instead of crashing.
 Use `--allow-expected-failures` for mixed pass/fail scenario roots where fail-class replay parity is expected, and use `--scenario-filter`/step policies to scope CI contracts.
-Use `--require-topology-coverage` to enforce that high-risk hotspot areas from `fozzy map suites` have matching scenario coverage.
+Use `--require-topology-coverage` to enforce that high-risk hotspot areas from `fozzy map suites` have matching scenario coverage. Topology profile defaults to `pedantic`.
 Strictest setting suggestion: strict mode is already on by default; pass `--unsafe` only when intentionally relaxing checks.
 
 ### `test`
@@ -230,11 +231,12 @@ For race-sensitive CI automation, prefer explicit `runId` or trace paths over al
 ```bash
 fozzy map hotspots [--root <repo>] [--min-risk <0..100>] [--limit <n>]
 fozzy map services [--root <repo>]
-fozzy map suites [--root <repo>] [--scenario-root <dir>] [--min-risk <0..100>] [--limit <n>]
+fozzy map suites [--root <repo>] [--scenario-root <dir>] [--min-risk <0..100>] [--profile <balanced|pedantic|overkill>] [--limit <n>]
 ```
 
 `map` is language-agnostic and derives risk hotspots from control-flow density, concurrency indicators, external side-effect boundaries, failure/timeout/retry logic, and entrypoint/service signals.
 Use `map suites` to find high-risk hotspots lacking dedicated scenario coverage and drive granular Fozzy suite generation.
+`map suites` defaults to `--profile pedantic` (safer-by-default over-spec bias).
 
 ### `doctor`
 
