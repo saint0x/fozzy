@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand, error::ErrorKind};
 use tracing_subscriber::EnvFilter;
 
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command as ProcessCommand, ExitCode};
 use walkdir::WalkDir;
 
 use cli_logger::CliLogger;
@@ -15,7 +15,7 @@ use fozzy::{
     FozzyDuration, FsBackend, FuzzMode, FuzzOptions, FuzzTarget, HttpBackend, InitTemplate,
     InitTestType, MapCommand, MapSuitesOptions, MemoryCommand, MemoryOptions, ProcBackend,
     RecordCollisionPolicy, ReportCommand, Reporter, RunOptions, RunSummary, ScenarioPath,
-    ScheduleStrategy, ShrinkMinimize, TopologyProfile, TracePath,
+    ScheduleStrategy, ShrinkCoveragePolicy, ShrinkMinimize, TopologyProfile, TracePath,
 };
 
 #[derive(Debug, Parser)]
@@ -516,6 +516,10 @@ enum Command {
         /// Topology strictness profile used when checking coverage.
         #[arg(long, default_value = "pedantic")]
         topology_profile: TopologyProfile,
+
+        /// Shrink evidence policy used by topology coverage (`failure_only`, `exercised_ok`, `no_known_failures`).
+        #[arg(long, default_value = "no-known-failures")]
+        topology_shrink_policy: ShrinkCoveragePolicy,
     },
 }
 
@@ -1237,6 +1241,7 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             require_topology_coverage,
             topology_min_risk,
             topology_profile,
+            topology_shrink_policy,
         } => {
             let report = run_full_command(
                 config,
@@ -1255,6 +1260,7 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
                 require_topology_coverage.as_deref(),
                 *topology_min_risk,
                 *topology_profile,
+                *topology_shrink_policy,
             )?;
             let has_failed = report
                 .steps
@@ -1288,6 +1294,11 @@ fn run_gate_command(
             detail,
         });
     };
+
+    match git_clean_tree_check() {
+        Ok(detail) => push("clean_tree", FullStepStatus::Passed, detail),
+        Err(err) => push("clean_tree", FullStepStatus::Failed, err.to_string()),
+    }
 
     let discovered = discover_scenarios(scenario_root);
     if !discovered.parse_errors.is_empty() {
@@ -1614,6 +1625,7 @@ fn run_full_command(
     require_topology_coverage: Option<&Path>,
     topology_min_risk: u8,
     topology_profile: TopologyProfile,
+    topology_shrink_policy: ShrinkCoveragePolicy,
 ) -> anyhow::Result<FullReport> {
     let mut steps = Vec::<FullStepResult>::new();
     let mut push = |name: &str, status: FullStepStatus, detail: String| {
@@ -1624,6 +1636,11 @@ fn run_full_command(
         });
     };
     let mut shrink_classification: Option<String> = None;
+
+    match git_clean_tree_check() {
+        Ok(detail) => push("clean_tree", FullStepStatus::Passed, detail),
+        Err(err) => push("clean_tree", FullStepStatus::Failed, err.to_string()),
+    }
 
     let mut guidance = vec![
         "Use the entire command surface by default; skip only when required inputs for a command are genuinely missing."
@@ -1731,6 +1748,7 @@ fn run_full_command(
             scenario_root: scenario_root.to_path_buf(),
             min_risk: topology_min_risk,
             profile: topology_profile,
+            shrink_policy: topology_shrink_policy,
             limit: 200,
         }) {
             Ok(report) => {
@@ -2583,6 +2601,41 @@ fn discover_scenarios(root: &Path) -> FullScenarioDiscovery {
     out.steps.sort();
     out.distributed.sort();
     out
+}
+
+fn git_clean_tree_check() -> anyhow::Result<String> {
+    let out = ProcessCommand::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|err| anyhow::anyhow!("failed to execute git status --porcelain: {err}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stderr_lower = stderr.to_ascii_lowercase();
+        if stderr_lower.contains("not a git repository") {
+            return Ok("git worktree check skipped: not a git repository".to_string());
+        }
+        return Err(anyhow::anyhow!(
+            "git status --porcelain failed; verify this is a git worktree{}{}",
+            if stderr.is_empty() { "" } else { ": " },
+            stderr
+        ));
+    }
+    let body = String::from_utf8_lossy(&out.stdout);
+    let dirty: Vec<&str> = body.lines().collect();
+    if dirty.is_empty() {
+        return Ok("git worktree clean".to_string());
+    }
+    let preview = dirty
+        .iter()
+        .take(3)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" | ");
+    Err(anyhow::anyhow!(
+        "git worktree is not clean ({} change(s)); example: {}",
+        dirty.len(),
+        preview
+    ))
 }
 
 fn selected_init_test_types(with: &[InitTestType], all_tests: bool) -> Vec<InitTestType> {

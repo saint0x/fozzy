@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
+use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvInfo {
@@ -30,8 +31,29 @@ pub struct VersionInfo {
 pub fn version_info() -> VersionInfo {
     VersionInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        commit: option_env!("FOZZY_COMMIT").map(|s| s.to_string()),
+        commit: resolved_commit_hash(),
         build_date: option_env!("FOZZY_BUILD_DATE").map(|s| s.to_string()),
+    }
+}
+
+fn resolved_commit_hash() -> Option<String> {
+    if let Some(commit) = option_env!("FOZZY_COMMIT")
+        && !commit.trim().is_empty()
+    {
+        return Some(commit.to_string());
+    }
+    let out = Command::new("git")
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let commit = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if commit.is_empty() {
+        None
+    } else {
+        Some(commit)
     }
 }
 

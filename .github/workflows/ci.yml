@@ -18,6 +18,22 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      - name: Ensure Clean Tree After Build/Test
+        shell: bash
+        run: |
+          set -euo pipefail
+          git update-index -q --refresh
+          git diff --quiet
+          git diff --cached --quiet
+          test -z "$(git ls-files --others --exclude-standard)"
+
+      - name: Version JSON Includes Commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --quiet -- version --json > /tmp/fozzy-version.json
+          jq -e '.commit != null and (.commit | type == "string") and (.commit | length > 0)' /tmp/fozzy-version.json >/dev/null
+
       - name: Artifacts Export Integrity Gate
         shell: bash
         run: |

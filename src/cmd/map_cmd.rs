@@ -25,6 +25,14 @@ pub enum TopologyProfile {
     Overkill,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ValueEnum, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShrinkCoveragePolicy {
+    FailureOnly,
+    ExercisedOk,
+    NoKnownFailures,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum MapCommand {
     /// Analyze repository hotspots and risk-ranked candidate areas for granular suites
@@ -51,6 +59,8 @@ pub enum MapCommand {
         min_risk: u8,
         #[arg(long, default_value = "pedantic")]
         profile: TopologyProfile,
+        #[arg(long, default_value = "no-known-failures")]
+        shrink_policy: ShrinkCoveragePolicy,
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
@@ -88,6 +98,8 @@ pub struct MapSuitesReport {
     #[serde(rename = "scannedFiles")]
     pub scanned_files: usize,
     pub profile: TopologyProfile,
+    #[serde(rename = "shrinkPolicy")]
+    pub shrink_policy: ShrinkCoveragePolicy,
     #[serde(rename = "baseMinRisk")]
     pub base_min_risk: u8,
     #[serde(rename = "effectiveMinRisk")]
@@ -191,6 +203,7 @@ pub struct MapSuitesOptions {
     pub scenario_root: PathBuf,
     pub min_risk: u8,
     pub profile: TopologyProfile,
+    pub shrink_policy: ShrinkCoveragePolicy,
     pub limit: usize,
 }
 
@@ -264,6 +277,7 @@ pub fn map_command(_config: &Config, command: &MapCommand) -> FozzyResult<serde_
             scenario_root,
             min_risk,
             profile,
+            shrink_policy,
             limit,
         } => {
             let report = map_suites(&MapSuitesOptions {
@@ -271,6 +285,7 @@ pub fn map_command(_config: &Config, command: &MapCommand) -> FozzyResult<serde_
                 scenario_root: scenario_root.clone(),
                 min_risk: *min_risk,
                 profile: *profile,
+                shrink_policy: *shrink_policy,
                 limit: *limit,
             })?;
             Ok(serde_json::to_value(report)?)
@@ -282,6 +297,7 @@ pub fn map_suites(opt: &MapSuitesOptions) -> FozzyResult<MapSuitesReport> {
     let facts = scan_repo(&opt.root)?;
     let scenario_files = discover_scenarios(&opt.scenario_root)?;
     let scenario_facts = build_scenario_facts(&scenario_files);
+    let has_known_shrink_failure = scenario_facts.iter().any(|s| s.has_shrink && s.has_failure);
 
     let effective_min_risk = effective_min_risk(opt.min_risk, opt.profile);
     let mut suites = Vec::<SuiteRecommendation>::new();
@@ -295,7 +311,12 @@ pub fn map_suites(opt: &MapSuitesOptions) -> FozzyResult<MapSuitesReport> {
             required_hotspot_count += 1;
         }
 
-        let required_suites = required_suites_for_hotspot(opt.profile, &hotspot.signals);
+        let required_suites = required_suites_for_hotspot(
+            opt.profile,
+            opt.shrink_policy,
+            &hotspot.signals,
+            has_known_shrink_failure,
+        );
         let coverage_evidence =
             covered_suites_for_hotspot(&required_suites, &hints, &scenario_facts);
         let covered_suites = coverage_evidence
@@ -348,11 +369,12 @@ pub fn map_suites(opt: &MapSuitesOptions) -> FozzyResult<MapSuitesReport> {
     let uncovered_hotspot_count = required_hotspot_count.saturating_sub(covered_hotspot_count);
 
     Ok(MapSuitesReport {
-        schema_version: "fozzy.map_suites.v3".to_string(),
+        schema_version: "fozzy.map_suites.v4".to_string(),
         root: facts.root.display().to_string(),
         scenario_root: opt.scenario_root.display().to_string(),
         scanned_files: facts.scanned_files,
         profile: opt.profile,
+        shrink_policy: opt.shrink_policy,
         base_min_risk: opt.min_risk,
         effective_min_risk,
         scenario_count: scenario_files.len(),
@@ -371,10 +393,17 @@ fn effective_min_risk(base: u8, profile: TopologyProfile) -> u8 {
     }
 }
 
-fn required_suites_for_hotspot(profile: TopologyProfile, s: &HotspotSignals) -> Vec<String> {
+fn required_suites_for_hotspot(
+    profile: TopologyProfile,
+    shrink_policy: ShrinkCoveragePolicy,
+    s: &HotspotSignals,
+    has_known_shrink_failure: bool,
+) -> Vec<String> {
     let mut out = BTreeSet::<String>::new();
     out.insert(SUITE_TEST_DET.to_string());
     out.insert(SUITE_RUN_REPLAY_CI.to_string());
+    let mut require_shrink_exercised = false;
+    let mut require_shrink_failure = false;
 
     match profile {
         TopologyProfile::Balanced => {
@@ -385,10 +414,10 @@ fn required_suites_for_hotspot(profile: TopologyProfile, s: &HotspotSignals) -> 
                 out.insert(SUITE_HOST.to_string());
             }
             if s.failure_signals > 0 || s.branch_signals > 25 {
-                out.insert(SUITE_SHRINK_EXERCISED.to_string());
+                require_shrink_exercised = true;
             }
             if s.failure_signals > 0 {
-                out.insert(SUITE_SHRINK_FAILURE.to_string());
+                require_shrink_failure = true;
             }
             if s.memory_signals > 2 {
                 out.insert(SUITE_MEMORY.to_string());
@@ -398,9 +427,9 @@ fn required_suites_for_hotspot(profile: TopologyProfile, s: &HotspotSignals) -> 
             }
         }
         TopologyProfile::Pedantic => {
-            out.insert(SUITE_SHRINK_EXERCISED.to_string());
+            require_shrink_exercised = true;
             if s.failure_signals > 0 {
-                out.insert(SUITE_SHRINK_FAILURE.to_string());
+                require_shrink_failure = true;
             }
             if s.concurrency_signals > 0 || s.failure_signals >= 4 {
                 out.insert(SUITE_EXPLORE.to_string());
@@ -420,8 +449,27 @@ fn required_suites_for_hotspot(profile: TopologyProfile, s: &HotspotSignals) -> 
             out.insert(SUITE_EXPLORE.to_string());
             out.insert(SUITE_HOST.to_string());
             out.insert(SUITE_MEMORY.to_string());
-            out.insert(SUITE_SHRINK_EXERCISED.to_string());
-            out.insert(SUITE_SHRINK_FAILURE.to_string());
+            require_shrink_exercised = true;
+            require_shrink_failure = true;
+        }
+    }
+    if require_shrink_failure {
+        require_shrink_exercised = true;
+    }
+    if require_shrink_exercised {
+        out.insert(SUITE_SHRINK_EXERCISED.to_string());
+    }
+    if require_shrink_failure {
+        match shrink_policy {
+            ShrinkCoveragePolicy::FailureOnly => {
+                out.insert(SUITE_SHRINK_FAILURE.to_string());
+            }
+            ShrinkCoveragePolicy::ExercisedOk => {}
+            ShrinkCoveragePolicy::NoKnownFailures => {
+                if has_known_shrink_failure {
+                    out.insert(SUITE_SHRINK_FAILURE.to_string());
+                }
+            }
         }
     }
 
@@ -752,16 +800,30 @@ fn should_skip_path(p: &Path) -> bool {
 fn is_candidate_file(p: &Path) -> bool {
     if p.file_name().and_then(|s| s.to_str()).is_some_and(|n| {
         matches!(
-            n,
+            n.to_ascii_lowercase().as_str(),
             "package-lock.json"
                 | "yarn.lock"
                 | "pnpm-lock.yaml"
+                | "npm-shrinkwrap.json"
+                | "bun.lockb"
+                | "bun.lock"
                 | "Cargo.lock"
+                | "go.sum"
                 | "Gemfile.lock"
                 | "Pipfile.lock"
                 | "poetry.lock"
                 | "composer.lock"
         )
+    }) {
+        return false;
+    }
+    if p.file_name().and_then(|s| s.to_str()).is_some_and(|n| {
+        let lower = n.to_ascii_lowercase();
+        lower.ends_with(".lock")
+            || lower.ends_with(".min.js")
+            || lower.ends_with(".min.css")
+            || lower.contains(".generated.")
+            || lower.contains(".gen.")
     }) {
         return false;
     }
@@ -795,12 +857,6 @@ fn is_candidate_file(p: &Path) -> bool {
             | "php"
             | "scala"
             | "sql"
-            | "yaml"
-            | "yml"
-            | "toml"
-            | "json"
-            | "ini"
-            | "conf"
             | "sh"
     )
 }
@@ -979,6 +1035,7 @@ mod tests {
             scenario_root: tests.clone(),
             min_risk: 10,
             profile: TopologyProfile::Pedantic,
+            shrink_policy: ShrinkCoveragePolicy::NoKnownFailures,
             limit: 50,
         })
         .expect("map suites");
@@ -997,11 +1054,82 @@ mod tests {
             memory_signals: 1,
             entrypoint_signals: 1,
         };
-        let balanced = required_suites_for_hotspot(TopologyProfile::Balanced, &signals).len();
-        let pedantic = required_suites_for_hotspot(TopologyProfile::Pedantic, &signals).len();
-        let overkill = required_suites_for_hotspot(TopologyProfile::Overkill, &signals).len();
+        let balanced = required_suites_for_hotspot(
+            TopologyProfile::Balanced,
+            ShrinkCoveragePolicy::FailureOnly,
+            &signals,
+            true,
+        )
+        .len();
+        let pedantic = required_suites_for_hotspot(
+            TopologyProfile::Pedantic,
+            ShrinkCoveragePolicy::FailureOnly,
+            &signals,
+            true,
+        )
+        .len();
+        let overkill = required_suites_for_hotspot(
+            TopologyProfile::Overkill,
+            ShrinkCoveragePolicy::FailureOnly,
+            &signals,
+            true,
+        )
+        .len();
         assert!(balanced <= pedantic, "balanced should be least strict");
         assert!(pedantic <= overkill, "overkill should be most strict");
+    }
+
+    #[test]
+    fn no_known_failures_policy_downgrades_shrink_failure_requirement() {
+        let signals = HotspotSignals {
+            line_count: 50,
+            branch_signals: 4,
+            concurrency_signals: 0,
+            external_signals: 0,
+            failure_signals: 1,
+            memory_signals: 0,
+            entrypoint_signals: 0,
+        };
+        let required = required_suites_for_hotspot(
+            TopologyProfile::Pedantic,
+            ShrinkCoveragePolicy::NoKnownFailures,
+            &signals,
+            false,
+        );
+        assert!(required.iter().any(|s| s == SUITE_SHRINK_EXERCISED));
+        assert!(!required.iter().any(|s| s == SUITE_SHRINK_FAILURE));
+    }
+
+    #[test]
+    fn no_known_failures_policy_requires_failure_if_failure_trace_exists() {
+        let signals = HotspotSignals {
+            line_count: 50,
+            branch_signals: 4,
+            concurrency_signals: 0,
+            external_signals: 0,
+            failure_signals: 1,
+            memory_signals: 0,
+            entrypoint_signals: 0,
+        };
+        let required = required_suites_for_hotspot(
+            TopologyProfile::Pedantic,
+            ShrinkCoveragePolicy::NoKnownFailures,
+            &signals,
+            true,
+        );
+        assert!(required.iter().any(|s| s == SUITE_SHRINK_FAILURE));
+    }
+
+    #[test]
+    fn candidate_file_filter_excludes_dependency_and_generated_artifacts() {
+        assert!(!is_candidate_file(Path::new("/repo/package-lock.json")));
+        assert!(!is_candidate_file(Path::new("/repo/Cargo.lock")));
+        assert!(!is_candidate_file(Path::new("/repo/dist/app.min.js")));
+        assert!(!is_candidate_file(Path::new(
+            "/repo/src/types.generated.ts"
+        )));
+        assert!(!is_candidate_file(Path::new("/repo/config/runtime.json")));
+        assert!(is_candidate_file(Path::new("/repo/src/main.rs")));
     }
 
     #[test]
