@@ -161,7 +161,7 @@ pub fn explore(
     };
 
     let finished_at = wall_time_iso_utc();
-    let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let (duration_ms, duration_ns) = crate::duration_fields(started.elapsed());
     let report_path = artifacts_dir.join("report.json");
 
     let mut summary = RunSummary {
@@ -177,6 +177,7 @@ pub fn explore(
         started_at,
         finished_at,
         duration_ms,
+        duration_ns,
         tests: None,
         memory: memory_report.as_ref().map(|m| m.summary.clone()),
         findings: findings.clone(),
@@ -280,6 +281,7 @@ pub fn replay_explore_trace(config: &Config, trace: &TraceFile) -> FozzyResult<c
         started_at,
         finished_at,
         duration_ms: 0,
+        duration_ns: 0,
         tests: None,
         memory: trace.memory.as_ref().map(|m| m.summary.clone()),
         findings,
@@ -448,6 +450,7 @@ pub fn shrink_explore_trace(
         started_at,
         finished_at,
         duration_ms: 0,
+        duration_ns: 0,
         tests: None,
         memory: trace.memory.as_ref().map(|m| m.summary.clone()),
         findings,

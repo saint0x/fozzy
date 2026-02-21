@@ -389,9 +389,9 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    pub fn load(path: &ScenarioPath) -> FozzyResult<Self> {
+    pub fn load_file(path: &ScenarioPath) -> FozzyResult<ScenarioFile> {
         let bytes = std::fs::read(path.as_path())?;
-        let file: ScenarioFile = serde_json::from_slice(&bytes).map_err(|err| {
+        serde_json::from_slice(&bytes).map_err(|err| {
             FozzyError::Scenario(format!(
                 "failed to parse scenario {}: {err}. expected one of: \
                  steps variant {{version,name,steps:[{{type:...}}]}}, \
@@ -400,7 +400,11 @@ impl Scenario {
                  try `fozzy schema --json` for full step/type definitions and examples.",
                 path.as_path().display()
             ))
-        })?;
+        })
+    }
+
+    pub fn load(path: &ScenarioPath) -> FozzyResult<Self> {
+        let file = Self::load_file(path)?;
         match file {
             ScenarioFile::Steps(s) => {
                 if s.version != 1 {
@@ -478,5 +482,76 @@ impl Scenario {
                 },
             ],
         }
+    }
+}
+
+impl ScenarioV1Distributed {
+    pub fn validate(&self) -> FozzyResult<()> {
+        if self.version != 1 {
+            return Err(FozzyError::Scenario(format!(
+                "unsupported distributed scenario version {} (expected 1)",
+                self.version
+            )));
+        }
+
+        let nodes = if let Some(explicit) = &self.distributed.nodes {
+            if explicit.is_empty() {
+                return Err(FozzyError::Scenario(
+                    "distributed.nodes must not be empty".to_string(),
+                ));
+            }
+            explicit.clone()
+        } else {
+            let count = self.distributed.node_count.ok_or_else(|| {
+                FozzyError::Scenario(
+                    "distributed requires either nodes:[...] or node_count".to_string(),
+                )
+            })?;
+            if count == 0 {
+                return Err(FozzyError::Scenario(
+                    "distributed.node_count must be >= 1".to_string(),
+                ));
+            }
+            (0..count).map(|i| format!("n{i}")).collect::<Vec<_>>()
+        };
+
+        for step in &self.distributed.steps {
+            match step {
+                DistributedStep::ClientPut { node, .. }
+                | DistributedStep::ClientGetAssert { node, .. }
+                | DistributedStep::Crash { node }
+                | DistributedStep::Restart { node } => {
+                    if !nodes.iter().any(|n| n == node) {
+                        return Err(FozzyError::Scenario(format!(
+                            "distributed step references unknown node {node:?}; known nodes: {}",
+                            nodes.join(", ")
+                        )));
+                    }
+                }
+                DistributedStep::Partition { a, b } | DistributedStep::Heal { a, b } => {
+                    if !nodes.iter().any(|n| n == a) || !nodes.iter().any(|n| n == b) {
+                        return Err(FozzyError::Scenario(format!(
+                            "distributed step references unknown partition pair ({a:?}, {b:?}); known nodes: {}",
+                            nodes.join(", ")
+                        )));
+                    }
+                }
+                DistributedStep::Tick { duration } => {
+                    parse_duration(duration)?;
+                }
+            }
+        }
+
+        for inv in &self.distributed.invariants {
+            if let DistributedInvariant::KvNodeEquals { node, .. } = inv
+                && !nodes.iter().any(|n| n == node)
+            {
+                return Err(FozzyError::Scenario(format!(
+                    "distributed invariant references unknown node {node:?}; known nodes: {}",
+                    nodes.join(", ")
+                )));
+            }
+        }
+        Ok(())
     }
 }

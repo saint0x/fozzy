@@ -13,9 +13,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::{
-    Config, ExitStatus, Finding, FindingKind, MemoryOptions, MemoryState, RecordCollisionPolicy,
-    Reporter, RunIdentity, RunMode, RunSummary, TraceEvent, TraceFile, wall_time_iso_utc,
-    write_memory_artifacts, write_trace_with_policy,
+    Config, ExitStatus, ExploreOptions, Finding, FindingKind, FsBackend, HttpBackend,
+    MemoryOptions, MemoryState, ProcBackend, RecordCollisionPolicy, Reporter, RunIdentity, RunMode,
+    RunOptions, RunSummary, ScenarioFile, ScenarioPath, ScheduleStrategy, TraceEvent, TraceFile,
+    wall_time_iso_utc, write_memory_artifacts, write_trace_with_policy,
 };
 
 use crate::{FozzyError, FozzyResult};
@@ -45,6 +46,7 @@ impl clap::ValueEnum for FuzzMode {
 #[derive(Debug, Clone)]
 pub enum FuzzTarget {
     Function { id: String },
+    Scenario { path: PathBuf },
 }
 
 impl std::str::FromStr for FuzzTarget {
@@ -61,9 +63,23 @@ impl std::str::FromStr for FuzzTarget {
             }
             return Ok(Self::Function { id });
         }
+        if let Some(rest) = s.strip_prefix("scenario:") {
+            let path = PathBuf::from(rest.trim());
+            if path.as_os_str().is_empty() {
+                return Err(FozzyError::InvalidArgument(
+                    "fuzz target scenario: requires a path".to_string(),
+                ));
+            }
+            return Ok(Self::Scenario { path });
+        }
+        if s.ends_with(".fozzy.json") {
+            return Ok(Self::Scenario {
+                path: PathBuf::from(s),
+            });
+        }
 
         Err(FozzyError::InvalidArgument(format!(
-            "unsupported fuzz target {s:?} (expected fn:<id>)"
+            "unsupported fuzz target {s:?} (expected fn:<id> or scenario:<path.fozzy.json>)"
         )))
     }
 }
@@ -159,7 +175,7 @@ pub fn fuzz(
         let mut input = base.clone();
         mutate_bytes(&mut input, &mut rng, opt.max_input_bytes);
 
-        let mut exec = execute_target(target, &input)?;
+        let mut exec = execute_target(config, target, &input)?;
         if let Some(mem) = memory_state.as_mut() {
             let outcome = mem.allocate(
                 input.len() as u64,
@@ -217,7 +233,7 @@ pub fn fuzz(
             let report_path = artifacts_dir.join("report.json");
 
             let finished_at = wall_time_iso_utc();
-            let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+            let (duration_ms, duration_ns) = crate::duration_fields(started.elapsed());
 
             let summary = RunSummary {
                 status: exec.status,
@@ -232,6 +248,7 @@ pub fn fuzz(
                 started_at: started_at.clone(),
                 finished_at,
                 duration_ms,
+                duration_ns,
                 tests: None,
                 memory: memory_state.as_ref().map(|m| m.clone().finalize().summary),
                 findings: exec.findings.clone(),
@@ -258,10 +275,11 @@ pub fn fuzz(
                 )?;
             }
 
-            let trace_out = opt
-                .record_trace_to
-                .clone()
-                .unwrap_or_else(|| artifacts_dir.join("trace.fozzy"));
+            let trace_out = crash_trace_output_path(
+                opt.record_trace_to.as_deref(),
+                &artifacts_dir,
+                crash_count,
+            );
             let trace =
                 TraceFile::new_fuzz(target_string(target), &input, exec.events, summary.clone());
             let mut trace = trace;
@@ -272,7 +290,8 @@ pub fn fuzz(
             crash_trace_path = Some(written);
 
             if opt.minimize || opt.shrink {
-                let minimized = minimize_input(target, &input, opt.max_input_bytes, exec.status)?;
+                let minimized =
+                    minimize_input(config, target, &input, opt.max_input_bytes, exec.status)?;
                 let _min_path = persist_crash_min_input(&corpus_dir, &minimized)?;
             }
 
@@ -284,7 +303,7 @@ pub fn fuzz(
     }
 
     let finished_at = wall_time_iso_utc();
-    let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let (duration_ms, duration_ns) = crate::duration_fields(started.elapsed());
     let mut status = if crash_count == 0 {
         ExitStatus::Pass
     } else {
@@ -308,6 +327,7 @@ pub fn fuzz(
         started_at,
         finished_at,
         duration_ms,
+        duration_ns,
         tests: None,
         memory: memory_report.as_ref().map(|m| m.summary.clone()),
         findings,
@@ -365,7 +385,7 @@ pub fn replay_fuzz_trace(config: &Config, trace: &TraceFile) -> FozzyResult<crat
     };
     let target: FuzzTarget = fuzz.target.parse()?;
     let input = hex_decode(&fuzz.input_hex)?;
-    let exec = execute_target(&target, &input)?;
+    let exec = execute_target(config, &target, &input)?;
 
     let run_id = Uuid::new_v4().to_string();
     let artifacts_dir = config.runs_dir().join(&run_id);
@@ -397,6 +417,7 @@ pub fn replay_fuzz_trace(config: &Config, trace: &TraceFile) -> FozzyResult<crat
         started_at,
         finished_at,
         duration_ms: 0,
+        duration_ns: 0,
         tests: None,
         memory: trace.memory.as_ref().map(|m| m.summary.clone()),
         findings,
@@ -432,8 +453,8 @@ pub fn shrink_fuzz_trace(
         ));
     }
 
-    let minimized = minimize_input(&target, &input, 1024 * 1024, target_status)?;
-    let exec = execute_target(&target, &minimized)?;
+    let minimized = minimize_input(_config, &target, &input, 1024 * 1024, target_status)?;
+    let exec = execute_target(_config, &target, &minimized)?;
 
     let out_path = opt
         .out_trace_path
@@ -455,6 +476,7 @@ pub fn shrink_fuzz_trace(
         started_at,
         finished_at,
         duration_ms: 0,
+        duration_ns: 0,
         tests: None,
         memory: trace.memory.as_ref().map(|m| m.summary.clone()),
         findings: exec.findings.clone(),
@@ -484,6 +506,7 @@ pub fn shrink_fuzz_trace(
 fn target_string(target: &FuzzTarget) -> String {
     match target {
         FuzzTarget::Function { id } => format!("fn:{id}"),
+        FuzzTarget::Scenario { path } => format!("scenario:{}", path.display()),
     }
 }
 
@@ -495,17 +518,18 @@ struct FuzzExec {
     coverage: BTreeSet<u64>,
 }
 
-fn execute_target(target: &FuzzTarget, input: &[u8]) -> FozzyResult<FuzzExec> {
+fn execute_target(config: &Config, target: &FuzzTarget, input: &[u8]) -> FozzyResult<FuzzExec> {
     match target {
         FuzzTarget::Function { id } => {
             let Some(plugin) = find_function_target(id) else {
                 return Err(FozzyError::InvalidArgument(format!(
                     "unknown fuzz function target {id:?} (supported: {})",
-                    supported_function_targets().join(", ")
+                    supported_fuzz_targets().join(", ")
                 )));
             };
             (plugin.exec)(input)
         }
+        FuzzTarget::Scenario { path } => execute_scenario_target(config, path, input),
     }
 }
 
@@ -535,6 +559,117 @@ fn supported_function_targets() -> Vec<String> {
         .iter()
         .map(|p| format!("fn:{}", p.id))
         .collect()
+}
+
+fn supported_fuzz_targets() -> Vec<String> {
+    let mut out = supported_function_targets();
+    out.push("scenario:<path.fozzy.json>".to_string());
+    out
+}
+
+fn execute_scenario_target(config: &Config, path: &Path, input: &[u8]) -> FozzyResult<FuzzExec> {
+    let seed = seed_from_input(input);
+    let scenario_path = ScenarioPath::new(path.to_path_buf());
+    let parsed = crate::Scenario::load_file(&scenario_path)?;
+    let (status, findings) = match parsed {
+        ScenarioFile::Steps(_) => {
+            let result = crate::run_scenario(
+                config,
+                scenario_path,
+                &RunOptions {
+                    det: true,
+                    seed: Some(seed),
+                    timeout: None,
+                    reporter: Reporter::Json,
+                    record_trace_to: None,
+                    filter: None,
+                    jobs: None,
+                    fail_fast: false,
+                    record_collision: RecordCollisionPolicy::Append,
+                    proc_backend: ProcBackend::Scripted,
+                    fs_backend: FsBackend::Virtual,
+                    http_backend: HttpBackend::Scripted,
+                    memory: scenario_fuzz_memory(),
+                },
+            )?;
+            (result.summary.status, result.summary.findings)
+        }
+        ScenarioFile::Distributed(_) => {
+            let result = crate::explore(
+                config,
+                scenario_path,
+                &ExploreOptions {
+                    seed: Some(seed),
+                    time: None,
+                    steps: Some(200),
+                    nodes: None,
+                    faults: Some("none".to_string()),
+                    schedule: ScheduleStrategy::CoverageGuided,
+                    checker: None,
+                    record_trace_to: None,
+                    shrink: false,
+                    minimize: false,
+                    reporter: Reporter::Json,
+                    record_collision: RecordCollisionPolicy::Append,
+                    memory: scenario_fuzz_memory(),
+                },
+            )?;
+            (result.summary.status, result.summary.findings)
+        }
+        ScenarioFile::Suites(_) => {
+            return Err(FozzyError::InvalidArgument(format!(
+                "scenario fuzz target {} uses suites variant; provide a steps or distributed scenario",
+                path.display()
+            )));
+        }
+    };
+
+    let mut coverage = BTreeSet::new();
+    coverage.insert(stable_edge(&format!("scenario_path:{}", path.display())));
+    coverage.insert(stable_edge(&format!("scenario_status:{status:?}")));
+    coverage.insert(stable_edge(&format!("scenario_seed:{seed}")));
+    for finding in &findings {
+        coverage.insert(stable_edge(&format!(
+            "scenario_finding:{}:{}",
+            finding.title, finding.message
+        )));
+    }
+
+    let event = TraceEvent {
+        time_ms: 1,
+        name: "scenario_fuzz_exec".to_string(),
+        fields: serde_json::Map::from_iter([
+            (
+                "path".to_string(),
+                serde_json::json!(path.display().to_string()),
+            ),
+            ("seed".to_string(), serde_json::json!(seed)),
+            (
+                "status".to_string(),
+                serde_json::json!(format!("{:?}", status).to_ascii_lowercase()),
+            ),
+        ]),
+    };
+
+    Ok(FuzzExec {
+        status,
+        findings,
+        events: vec![event],
+        coverage,
+    })
+}
+
+fn scenario_fuzz_memory() -> MemoryOptions {
+    MemoryOptions {
+        track: false,
+        limit_mb: None,
+        fail_after_allocs: None,
+        fail_on_leak: false,
+        leak_budget_bytes: None,
+        fragmentation_seed: None,
+        pressure_wave: None,
+        artifacts: false,
+    }
 }
 
 fn execute_kv(input: &[u8]) -> FozzyResult<FuzzExec> {
@@ -592,9 +727,10 @@ fn execute_kv(input: &[u8]) -> FozzyResult<FuzzExec> {
                 let got = map.get(&k).cloned();
                 if got.as_deref() != Some(&v) {
                     findings.push(Finding {
-                        kind: FindingKind::Assertion,
-                        title: "kv_assert".to_string(),
-                        message: "asserted key != expected value".to_string(),
+                        kind: FindingKind::TargetBehavior,
+                        title: "kv_assert_mismatch".to_string(),
+                        message: "built-in target behavior: kv assertion opcode mismatch"
+                            .to_string(),
                         location: None,
                     });
                     coverage.insert(stable_edge("assert:fail"));
@@ -609,9 +745,9 @@ fn execute_kv(input: &[u8]) -> FozzyResult<FuzzExec> {
             }
             0xFE => {
                 findings.push(Finding {
-                    kind: FindingKind::Panic,
-                    title: "panic".to_string(),
-                    message: "panic opcode reached".to_string(),
+                    kind: FindingKind::TargetBehavior,
+                    title: "panic_opcode".to_string(),
+                    message: "built-in target behavior: panic opcode reached".to_string(),
                     location: None,
                 });
                 return Ok(FuzzExec {
@@ -623,9 +759,9 @@ fn execute_kv(input: &[u8]) -> FozzyResult<FuzzExec> {
             }
             0xFF => {
                 findings.push(Finding {
-                    kind: FindingKind::Hang,
-                    title: "hang".to_string(),
-                    message: "hang opcode reached".to_string(),
+                    kind: FindingKind::TargetBehavior,
+                    title: "hang_opcode".to_string(),
+                    message: "built-in target behavior: hang opcode reached".to_string(),
                     location: None,
                 });
                 return Ok(FuzzExec {
@@ -668,9 +804,9 @@ fn execute_utf8(input: &[u8]) -> FozzyResult<FuzzExec> {
     if std::str::from_utf8(input).is_err() {
         coverage.insert(stable_edge("utf8:invalid"));
         findings.push(Finding {
-            kind: FindingKind::Checker,
+            kind: FindingKind::InputInvalid,
             title: "utf8_invalid".to_string(),
-            message: "input is not valid utf-8".to_string(),
+            message: "generated input is not valid utf-8 (built-in target behavior)".to_string(),
             location: None,
         });
         return Ok(FuzzExec {
@@ -688,9 +824,9 @@ fn execute_utf8(input: &[u8]) -> FozzyResult<FuzzExec> {
     if s.contains("ASSERT_FAIL") {
         coverage.insert(stable_edge("utf8:assert_fail"));
         findings.push(Finding {
-            kind: FindingKind::Assertion,
+            kind: FindingKind::TargetBehavior,
             title: "utf8_assert".to_string(),
-            message: "ASSERT_FAIL marker reached".to_string(),
+            message: "built-in target behavior: ASSERT_FAIL marker reached".to_string(),
             location: None,
         });
         return Ok(FuzzExec {
@@ -703,9 +839,9 @@ fn execute_utf8(input: &[u8]) -> FozzyResult<FuzzExec> {
     if s.contains("PANIC") {
         coverage.insert(stable_edge("utf8:panic"));
         findings.push(Finding {
-            kind: FindingKind::Panic,
+            kind: FindingKind::TargetBehavior,
             title: "utf8_panic".to_string(),
-            message: "PANIC marker reached".to_string(),
+            message: "built-in target behavior: PANIC marker reached".to_string(),
             location: None,
         });
         return Ok(FuzzExec {
@@ -718,9 +854,9 @@ fn execute_utf8(input: &[u8]) -> FozzyResult<FuzzExec> {
     if s.contains("TIMEOUT") {
         coverage.insert(stable_edge("utf8:timeout"));
         findings.push(Finding {
-            kind: FindingKind::Hang,
+            kind: FindingKind::TargetBehavior,
             title: "utf8_timeout".to_string(),
-            message: "TIMEOUT marker reached".to_string(),
+            message: "built-in target behavior: TIMEOUT marker reached".to_string(),
             location: None,
         });
         return Ok(FuzzExec {
@@ -855,7 +991,31 @@ fn persist_crash_min_input(dir: &Path, bytes: &[u8]) -> FozzyResult<PathBuf> {
     Ok(out)
 }
 
+fn crash_trace_output_path(
+    record_path: Option<&Path>,
+    artifacts_dir: &Path,
+    crash_count: u64,
+) -> PathBuf {
+    let base = record_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| artifacts_dir.join("trace.fozzy"));
+    if crash_count <= 1 {
+        return base;
+    }
+    with_numeric_suffix(&base, crash_count - 1)
+}
+
+fn with_numeric_suffix(path: &Path, suffix: u64) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("trace");
+    match path.extension().and_then(|s| s.to_str()) {
+        Some(ext) => parent.join(format!("{stem}.{suffix}.{ext}")),
+        None => parent.join(format!("{stem}.{suffix}")),
+    }
+}
+
 fn minimize_input(
+    config: &Config,
     target: &FuzzTarget,
     input: &[u8],
     max_len: usize,
@@ -878,7 +1038,7 @@ fn minimize_input(
                 i += chunk;
                 continue;
             }
-            let exec = execute_target(target, &trial)?;
+            let exec = execute_target(config, target, &trial)?;
             if crate::shrink_status_matches(target_status, exec.status) {
                 best = trial;
                 improved = true;
@@ -902,6 +1062,13 @@ fn stable_edge(label: &str) -> u64 {
     let mut b = [0u8; 8];
     b.copy_from_slice(&h.as_bytes()[..8]);
     u64::from_le_bytes(b)
+}
+
+fn seed_from_input(input: &[u8]) -> u64 {
+    let h = blake3::hash(input);
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&h.as_bytes()[..8]);
+    u64::from_le_bytes(out)
 }
 
 fn gen_seed() -> u64 {
@@ -938,5 +1105,36 @@ fn hex_val(b: u8) -> FozzyResult<u8> {
         b'a'..=b'f' => Ok(b - b'a' + 10),
         b'A'..=b'F' => Ok(b - b'A' + 10),
         _ => Err(FozzyError::Trace("invalid hex character".to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FuzzTarget, crash_trace_output_path, with_numeric_suffix};
+    use std::path::Path;
+
+    #[test]
+    fn crash_trace_output_path_uses_base_then_numbered_suffixes() {
+        let artifacts_dir = Path::new("/tmp/fozzy-run");
+        let first = crash_trace_output_path(None, artifacts_dir, 1);
+        let second = crash_trace_output_path(None, artifacts_dir, 2);
+        let third = crash_trace_output_path(None, artifacts_dir, 3);
+        assert_eq!(first, artifacts_dir.join("trace.fozzy"));
+        assert_eq!(second, artifacts_dir.join("trace.1.fozzy"));
+        assert_eq!(third, artifacts_dir.join("trace.2.fozzy"));
+    }
+
+    #[test]
+    fn with_numeric_suffix_handles_paths_without_extension() {
+        let out = with_numeric_suffix(Path::new("artifacts/trace"), 4);
+        assert_eq!(out, Path::new("artifacts/trace.4"));
+    }
+
+    #[test]
+    fn fuzz_target_parses_scenario_prefix_and_path_form() {
+        let a: FuzzTarget = "scenario:tests/example.fozzy.json".parse().expect("prefix");
+        let b: FuzzTarget = "tests/example.fozzy.json".parse().expect("path form");
+        assert!(matches!(a, FuzzTarget::Scenario { .. }));
+        assert!(matches!(b, FuzzTarget::Scenario { .. }));
     }
 }

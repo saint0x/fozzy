@@ -32,6 +32,16 @@ pub struct CiReport {
 }
 
 pub fn ci_command(config: &Config, opt: &CiOptions) -> FozzyResult<CiReport> {
+    let report = ci_evaluate(config, opt)?;
+    if !report.ok {
+        return Err(FozzyError::InvalidArgument(
+            "ci gate failed (one or more checks failed)".to_string(),
+        ));
+    }
+    Ok(report)
+}
+
+pub fn ci_evaluate(config: &Config, opt: &CiOptions) -> FozzyResult<CiReport> {
     if opt.flake_budget_pct.is_some() && opt.flake_runs.is_empty() {
         return Err(FozzyError::InvalidArgument(
             "--flake-budget requires at least two --flake-run inputs".to_string(),
@@ -162,11 +172,6 @@ pub fn ci_command(config: &Config, opt: &CiOptions) -> FozzyResult<CiReport> {
     }
 
     let ok = checks.iter().all(|c| c.ok);
-    if !ok {
-        return Err(FozzyError::InvalidArgument(
-            "ci gate failed (one or more checks failed)".to_string(),
-        ));
-    }
     Ok(CiReport {
         schema_version: "fozzy.ci_report.v1".to_string(),
         ok,

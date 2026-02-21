@@ -342,7 +342,9 @@ pub fn init_project(
   "distributed": {
     "node_count": 3,
     "steps": [
+      { "type": "client_put", "node": "n0", "key": "k", "value": "v1" },
       { "type": "client_put", "node": "n1", "key": "k", "value": "v1" },
+      { "type": "client_put", "node": "n2", "key": "k", "value": "v1" },
       { "type": "tick", "duration": "20ms" }
     ],
     "invariants": [
@@ -550,7 +552,7 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
     }
 
     let finished_at = wall_time_iso_utc();
-    let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let (duration_ms, duration_ns) = crate::duration_fields(started.elapsed());
 
     let status = if failed == 0 {
         ExitStatus::Pass
@@ -575,6 +577,7 @@ pub fn run_tests(config: &Config, globs: &[String], opt: &RunOptions) -> FozzyRe
         started_at,
         finished_at,
         duration_ms,
+        duration_ns,
         tests: Some(crate::TestCounts {
             passed,
             failed,
@@ -631,6 +634,7 @@ fn write_test_traces(
             started_at: wall_time_iso_utc(),
             finished_at: wall_time_iso_utc(),
             duration_ms: 0,
+            duration_ns: 0,
             tests: None,
             memory: run.memory.as_ref().map(|m| m.summary.clone()),
             findings: run.findings.clone(),
@@ -678,6 +682,7 @@ fn write_test_traces(
             started_at: wall_time_iso_utc(),
             finished_at: wall_time_iso_utc(),
             duration_ms: 0,
+            duration_ns: 0,
             tests: None,
             memory: run.memory.as_ref().map(|m| m.summary.clone()),
             findings: run.findings.clone(),
@@ -721,7 +726,7 @@ pub fn run_scenario(
         opt.memory.clone(),
     )?;
     let finished_at = wall_time_iso_utc();
-    let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let (duration_ms, duration_ns) = crate::duration_fields(started.elapsed());
 
     let artifacts_dir = config.runs_dir().join(&run_id);
     std::fs::create_dir_all(&artifacts_dir)?;
@@ -742,6 +747,7 @@ pub fn run_scenario(
         started_at,
         finished_at,
         duration_ms,
+        duration_ns,
         tests: None,
         memory: run.memory.as_ref().map(|m| m.summary.clone()),
         findings: run.findings.clone(),
@@ -847,7 +853,7 @@ pub fn replay_trace(
     )?;
 
     let finished_at = wall_time_iso_utc();
-    let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let (duration_ms, duration_ns) = crate::duration_fields(started.elapsed());
 
     let artifacts_dir = config.runs_dir().join(&run_id);
     std::fs::create_dir_all(&artifacts_dir)?;
@@ -895,6 +901,7 @@ pub fn replay_trace(
         started_at,
         finished_at,
         duration_ms,
+        duration_ns,
         tests: None,
         memory: run.memory.as_ref().map(|m| m.summary.clone()),
         findings,
@@ -1049,6 +1056,7 @@ pub fn shrink_trace(
         started_at,
         finished_at,
         duration_ms: 0,
+        duration_ns: 0,
         tests: None,
         memory: run.memory.as_ref().map(|m| m.summary.clone()),
         findings: run.findings.clone(),
@@ -2124,15 +2132,6 @@ impl ExecCtx {
                 delay,
                 times,
             } => {
-                if matches!(self.http_backend, HttpBackend::Host) {
-                    return Err(Finding {
-                        kind: FindingKind::Checker,
-                        title: "http_when_backend".to_string(),
-                        message: "http_when is only supported with scripted http backend"
-                            .to_string(),
-                        location: None,
-                    });
-                }
                 if body.is_some() && json.is_some() {
                     return Err(Finding {
                         kind: FindingKind::Checker,
@@ -2153,6 +2152,20 @@ impl ExecCtx {
                 } else {
                     0
                 };
+                if matches!(self.http_backend, HttpBackend::Host)
+                    && !host_http_rule_path_supported(path)
+                {
+                    return Err(Finding {
+                        kind: FindingKind::Checker,
+                        title: "http_when_host_path".to_string(),
+                        message: format!(
+                            "http_when path {path:?} is not supported with host backend; use an absolute http(s) url or a path beginning with '/'. examples: \
+                             {{\"type\":\"http_when\",\"method\":\"GET\",\"path\":\"https://api.example.com/v1/me\",...}} \
+                             or {{\"type\":\"http_when\",\"method\":\"GET\",\"path\":\"/v1/me\",...}}"
+                        ),
+                        location: None,
+                    });
+                }
 
                 self.http_rules.push(HttpRule {
                     method: method.clone(),
@@ -2221,6 +2234,22 @@ impl ExecCtx {
                             location: None,
                         });
                     }
+                    let host_rule_idx = self.http_rules.iter().position(|r| {
+                        r.remaining > 0 && r.method == *method && host_http_rule_matches(r, path)
+                    });
+                    if !self.http_rules.is_empty() && host_rule_idx.is_none() {
+                        return Err(Finding {
+                            kind: FindingKind::Assertion,
+                            title: "http_when_host_unmatched".to_string(),
+                            message: format!(
+                                "no http_when matched host request {method} {path}. remediation: \
+                                 1) align http_when.method/path with this request (absolute url or '/path'), \
+                                 2) run with --http-backend scripted to use mocked responses. example: \
+                                 fozzy run <scenario.fozzy.json> --http-backend scripted --json"
+                            ),
+                            location: None,
+                        });
+                    }
                     let request_headers = canonical_headers(headers.as_ref())?;
                     let response =
                         dispatch_host_http(method, path, &request_headers, body.as_deref())
@@ -2237,6 +2266,21 @@ impl ExecCtx {
                         headers: response.headers.clone(),
                         body: response.body.clone(),
                     });
+                    if let Some(idx) = host_rule_idx {
+                        let mut rule = self.http_rules[idx].clone();
+                        if rule.remaining != u64::MAX {
+                            rule.remaining = rule.remaining.saturating_sub(1);
+                        }
+                        self.http_rules[idx] = rule.clone();
+                        assert_http_when_response_matches_host(
+                            method,
+                            path,
+                            &rule,
+                            response.status,
+                            &response.headers,
+                            &response.body,
+                        )?;
+                    }
                     (
                         response.status,
                         response.headers,
@@ -3187,6 +3231,96 @@ fn dispatch_host_http(
         headers: out_headers,
         body,
     })
+}
+
+fn host_http_rule_path_supported(path: &str) -> bool {
+    path.starts_with("http://") || path.starts_with("https://") || path.starts_with('/')
+}
+
+fn host_http_rule_matches(rule: &HttpRule, request_url: &str) -> bool {
+    if rule.path.starts_with("http://") || rule.path.starts_with("https://") {
+        return rule.path == request_url;
+    }
+    if let Some(request_path) = extract_http_path_and_query(request_url) {
+        return request_path == rule.path;
+    }
+    false
+}
+
+fn extract_http_path_and_query(url: &str) -> Option<&str> {
+    let rest = if let Some(v) = url.strip_prefix("http://") {
+        v
+    } else if let Some(v) = url.strip_prefix("https://") {
+        v
+    } else {
+        return None;
+    };
+    if let Some(idx) = rest.find('/') {
+        Some(&rest[idx..])
+    } else {
+        Some("/")
+    }
+}
+
+fn assert_http_when_response_matches_host(
+    method: &str,
+    path: &str,
+    rule: &HttpRule,
+    status_code: u16,
+    headers: &BTreeMap<String, String>,
+    body: &str,
+) -> Result<(), Finding> {
+    if status_code != rule.status {
+        return Err(Finding {
+            kind: FindingKind::Assertion,
+            title: "http_when_host_status".to_string(),
+            message: format!(
+                "http_when expected status {} for {method} {path}, got {}",
+                rule.status, status_code
+            ),
+            location: None,
+        });
+    }
+    for (k, v) in &rule.headers {
+        let got = headers.get(k);
+        if got != Some(v) {
+            return Err(Finding {
+                kind: FindingKind::Assertion,
+                title: "http_when_host_headers".to_string(),
+                message: format!(
+                    "http_when header mismatch for {method} {path} header {k:?}: expected {v:?}, got {got:?}"
+                ),
+                location: None,
+            });
+        }
+    }
+    if let Some(expected_body) = &rule.body
+        && body != expected_body
+    {
+        return Err(Finding {
+            kind: FindingKind::Assertion,
+            title: "http_when_host_body".to_string(),
+            message: format!("http_when body mismatch for {method} {path}"),
+            location: None,
+        });
+    }
+    if let Some(expected_json) = &rule.json {
+        let got: serde_json::Value = serde_json::from_str(body).map_err(|e| Finding {
+            kind: FindingKind::Assertion,
+            title: "http_when_host_json_parse".to_string(),
+            message: format!("http_when expected json response for {method} {path}: {e}"),
+            location: None,
+        })?;
+        if &got != expected_json {
+            return Err(Finding {
+                kind: FindingKind::Assertion,
+                title: "http_when_host_json".to_string(),
+                message: format!("http_when json mismatch for {method} {path}"),
+                location: None,
+            });
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]

@@ -42,9 +42,10 @@ Execution policy: use the full command surface by default. Skip commands only wh
 |---|---|---|
 | `init` | Create project config/scaffold (with test-type starters) | `fozzy init --template rust --with run,memory,explore,fuzz,host` |
 | `full` | Run the complete command-surface gate with guidance and graceful skips | `fozzy full --scenario-root tests --seed 7` |
+| `gate` | Run lightweight strict deterministic gate checks scoped to changed areas | `fozzy gate --profile targeted --scope gateway,local-bridge --seed 7` |
 | `test` | Run suites/globs of scenarios | `fozzy test tests/**/*.fozzy.json --det` |
 | `run` | Run one scenario directly | `fozzy run tests/example.fozzy.json` |
-| `fuzz` | Mutation/property fuzzing | `fozzy fuzz fn:utf8 --runs 1000` |
+| `fuzz` | Mutation/property fuzzing | `fozzy fuzz scenario:tests/example.fozzy.json --runs 1000` |
 | `explore` | Distributed schedules + faults | `fozzy explore tests/kv.explore.fozzy.json --schedule bfs` |
 | `replay` | Deterministically replay a trace | `fozzy replay .fozzy/runs/<runId>/trace.fozzy` |
 | `trace verify` | Verify trace checksum/schema | `fozzy trace verify trace.fozzy --json` |
@@ -86,7 +87,7 @@ fozzy full [--scenario-root <dir>] [--seed <n>] [--doctor-runs <n>] \
 ```
 
 `fozzy full` is the hand-holding end-to-end gate. It targets the full CLI surface:
-`init`, `test`, `run`, `fuzz`, `explore`, `replay`, `trace verify`, `shrink`, `corpus`, `artifacts`, `report`, `memory`, `doctor`, `ci`, `env`, `version`, `usage`.
+`init`, `test`, `run`, `fuzz`, `explore`, `replay`, `trace verify`, `shrink`, `corpus`, `artifacts`, `report`, `memory`, `doctor`, `ci`, `gate`, `env`, `version`, `usage`.
 If a required input is missing (for example no distributed scenario), it records a graceful skip instead of crashing.
 Use `--allow-expected-failures` for mixed pass/fail scenario roots where fail-class replay parity is expected, and use `--scenario-filter`/step policies to scope CI contracts.
 Use `--require-topology-coverage` to enforce that high-risk hotspot areas from `fozzy map suites` have matching scenario coverage. Topology profile defaults to `pedantic`.
@@ -106,6 +107,7 @@ fozzy test [globs...] [--det] [--seed <n>] [--jobs <n>] [--timeout <dur>] \
 `fozzy test` executes Fozzy scenario files. It does not directly launch arbitrary host test commands.
 For host execution, use `--proc-backend host`, `--fs-backend host`, and/or `--http-backend host` (non-deterministic mode only). Host-process and host-http responses are captured as replay decisions so `fozzy replay` remains deterministic.
 `http_request` supports request `headers` and response `expect_headers` assertions.
+`http_when` is supported in host mode as a response assertion rule when `path` is an absolute URL or a `/path` matcher.
 Strictest setting suggestion: strict mode is already on by default; pass `--unsafe` only when intentionally relaxing checks.
 
 ### `run`
@@ -113,7 +115,7 @@ Strictest setting suggestion: strict mode is already on by default; pass `--unsa
 ```bash
 fozzy run <scenario> [--det] [--seed <n>] [--timeout <dur>] \
   [--reporter <json|pretty|junit|html>] \
-  [--record <path>] [--record-collision error|overwrite|append] \
+  [--record <path>] [--record-collision append|overwrite|error] \
   [--mem-track] [--mem-limit-mb <n>] [--mem-fail-after <n>] \
   [--mem-fragmentation-seed <n>] [--mem-pressure-wave <pattern>] \
   [--fail-on-leak] [--leak-budget <bytes>] [--mem-artifacts]
@@ -131,6 +133,8 @@ fozzy fuzz <target> [--mode coverage|property] [--seed <n>] [--time <dur>] \
   [--mem-fragmentation-seed <n>] [--mem-pressure-wave <pattern>] \
   [--fail-on-leak] [--leak-budget <bytes>] [--mem-artifacts]
 ```
+`<target>` supports `fn:<id>` built-ins and `scenario:<path.fozzy.json>` for product scenario fuzzing.
+Built-in `fn:*` findings are emitted as `target_behavior`/`input_invalid` to avoid product-defect ambiguity.
 Strictest setting suggestion: strict mode is already on by default; pass `--unsafe` only when intentionally relaxing checks.
 
 ### `explore`
@@ -192,12 +196,23 @@ fozzy artifacts ls <run-id|trace>
 fozzy artifacts diff <left-run-id|trace> <right-run-id|trace>
 fozzy artifacts export <run-id|trace> --out <dir|zip>
 fozzy artifacts pack <run-id|trace> --out <dir|zip>
+fozzy artifacts bundle <run-id|trace> --out <dir|zip>
 ```
 
 `pack` includes reproducer metadata (`env`, `version`, `commandline`).
+`bundle` adds a gate handoff bundle with recorded trace + trace verify report + replay report + CI report + environment/version metadata.
 Run selectors also support aliases: `latest`, `last-pass`, `last-fail`.
 For race-sensitive CI automation, prefer explicit `runId` or trace paths over aliases.
 Strictest setting suggestion: strict mode is already on by default; pass `--unsafe` only when intentionally relaxing checks.
+
+### `gate`
+
+```bash
+fozzy gate [--profile targeted] [--scenario-root <dir>] [--scope <comma,list>] \
+  [--seed <n>] [--doctor-runs <n>]
+```
+
+`targeted` profile runs strict deterministic doctor/test/run+record/trace verify/replay/ci on matched step scenarios only.
 
 ### `report`
 
@@ -283,5 +298,5 @@ Strictest setting suggestion: strict mode is already on by default; pass `--unsa
 fozzy validate <scenario.fozzy.json>
 ```
 
-Validates parse + step-shape semantics and returns non-zero on invalid scenarios.
+Validates parse + shape semantics for both `steps` and `distributed` variants, and returns non-zero on invalid scenarios.
 Strictest setting suggestion: strict mode is already on by default; pass `--unsafe` only when intentionally relaxing checks.

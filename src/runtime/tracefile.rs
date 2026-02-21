@@ -270,8 +270,8 @@ fn resolve_record_target(path: &Path, policy: RecordCollisionPolicy) -> FozzyRes
         RecordCollisionPolicy::Error => {
             if path.exists() {
                 Err(FozzyError::Trace(format!(
-                    "record collision: {} already exists (--record-collision=error)",
-                    path.display()
+                    "record collision: {} already exists (--record-collision=error). rerun with --record-collision overwrite (replace) or --record-collision append (keep both)",
+                    path.display(),
                 )))
             } else {
                 Ok(path.to_path_buf())
@@ -399,6 +399,7 @@ mod tests {
             started_at: "2026-01-01T00:00:00Z".to_string(),
             finished_at: "2026-01-01T00:00:00Z".to_string(),
             duration_ms: 0,
+            duration_ns: 0,
             tests: None,
             memory: None,
             findings: Vec::new(),

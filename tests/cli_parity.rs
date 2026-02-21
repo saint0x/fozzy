@@ -1165,6 +1165,109 @@ fn scripted_http_when_supports_response_headers_assertions() {
 }
 
 #[test]
+fn host_http_when_supports_absolute_url_rules() {
+    let (url, stop_tx) = spawn_one_shot_http_server();
+    let ws = temp_workspace("host-http-when-absolute");
+    let scenario = ws.join("host-http-when-absolute.fozzy.json");
+    let raw = format!(
+        r#"{{
+      "version":1,
+      "name":"host-http-when-absolute",
+      "steps":[
+        {{"type":"http_when","method":"GET","path":"{url}","status":200,"body":"ok"}},
+        {{"type":"http_request","method":"GET","path":"{url}"}}
+      ]
+    }}"#
+    );
+    std::fs::write(&scenario, raw).expect("write scenario");
+    let run = run_cli(&[
+        "--http-backend".into(),
+        "host".into(),
+        "run".into(),
+        scenario.to_string_lossy().to_string(),
+        "--json".into(),
+    ]);
+    let _ = stop_tx.send(());
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "host http_when absolute rule should pass: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+#[test]
+fn host_http_when_supports_relative_path_rules() {
+    let (url, stop_tx) = spawn_one_shot_http_server();
+    let ws = temp_workspace("host-http-when-relative");
+    let scenario = ws.join("host-http-when-relative.fozzy.json");
+    let raw = format!(
+        r#"{{
+      "version":1,
+      "name":"host-http-when-relative",
+      "steps":[
+        {{"type":"http_when","method":"GET","path":"/ping","status":200,"body":"ok"}},
+        {{"type":"http_request","method":"GET","path":"{url}"}}
+      ]
+    }}"#
+    );
+    std::fs::write(&scenario, raw).expect("write scenario");
+    let run = run_cli(&[
+        "--http-backend".into(),
+        "host".into(),
+        "run".into(),
+        scenario.to_string_lossy().to_string(),
+        "--json".into(),
+    ]);
+    let _ = stop_tx.send(());
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "host http_when relative rule should pass: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+#[test]
+fn host_http_when_unmatched_includes_remediation_guidance() {
+    let (url, stop_tx) = spawn_one_shot_http_server();
+    let ws = temp_workspace("host-http-when-unmatched");
+    let scenario = ws.join("host-http-when-unmatched.fozzy.json");
+    let raw = format!(
+        r#"{{
+      "version":1,
+      "name":"host-http-when-unmatched",
+      "steps":[
+        {{"type":"http_when","method":"GET","path":"/wrong","status":200,"body":"ok"}},
+        {{"type":"http_request","method":"GET","path":"{url}"}}
+      ]
+    }}"#
+    );
+    std::fs::write(&scenario, raw).expect("write scenario");
+    let run = run_cli(&[
+        "--http-backend".into(),
+        "host".into(),
+        "run".into(),
+        scenario.to_string_lossy().to_string(),
+        "--json".into(),
+    ]);
+    let _ = stop_tx.send(());
+    assert_eq!(run.status.code(), Some(1), "host rule mismatch should fail");
+    let doc = parse_json_stdout(&run);
+    let msg = doc
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|finding| finding.get("message"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    assert!(
+        msg.contains("--http-backend scripted"),
+        "expected remediation guidance in message, got: {msg}"
+    );
+}
+
+#[test]
 fn full_allow_expected_failures_controls_shrink_status_for_fail_class_runs() {
     let ws = temp_workspace("full-allow-expected-failures");
     let scenario_root = ws.join("tests");
@@ -1326,6 +1429,116 @@ fn validate_returns_non_zero_with_actionable_parse_diagnostics() {
 }
 
 #[test]
+fn validate_accepts_distributed_scenarios() {
+    let ws = temp_workspace("validate-distributed");
+    let scenario = ws.join("distributed.fozzy.json");
+    std::fs::write(
+        &scenario,
+        r#"{
+          "version":1,
+          "name":"dist-ok",
+          "distributed":{
+            "node_count":3,
+            "steps":[
+              {"type":"client_put","node":"n0","key":"k","value":"v"},
+              {"type":"tick","duration":"10ms"}
+            ],
+            "invariants":[{"type":"kv_present_on_all","key":"k"}]
+          }
+        }"#,
+    )
+    .expect("write distributed scenario");
+    let out = run_cli(&[
+        "validate".into(),
+        scenario.to_string_lossy().to_string(),
+        "--json".into(),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let doc = parse_json_stdout(&out);
+    assert_eq!(doc.get("ok").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        doc.get("variant").and_then(|v| v.as_str()),
+        Some("distributed")
+    );
+}
+
+#[test]
+fn run_record_collision_defaults_to_append_for_iterative_runs() {
+    let ws = temp_workspace("run-record-append");
+    let scenario = ws.join("pass.fozzy.json");
+    std::fs::write(&scenario, fixture("example.fozzy.json")).expect("write scenario");
+    let record = ws.join("trace.fozzy");
+    let args = vec![
+        "run".to_string(),
+        scenario.to_string_lossy().to_string(),
+        "--record".to_string(),
+        record.to_string_lossy().to_string(),
+        "--json".to_string(),
+    ];
+    let first = run_cli(&args);
+    assert_eq!(first.status.code(), Some(0));
+    let second = run_cli(&args);
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "second run should append by default, stderr={}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+}
+
+#[test]
+fn fuzz_supports_scenario_target() {
+    let ws = temp_workspace("fuzz-scenario-target");
+    let scenario = ws.join("app.pass.fozzy.json");
+    std::fs::write(&scenario, fixture("example.fozzy.json")).expect("write scenario");
+    let out = run_cli(&[
+        "fuzz".into(),
+        format!("scenario:{}", scenario.display()),
+        "--runs".into(),
+        "1".into(),
+        "--json".into(),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "fuzz scenario target should run, stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc = parse_json_stdout(&out);
+    assert_eq!(doc.get("mode").and_then(|v| v.as_str()), Some("fuzz"));
+}
+
+#[test]
+fn full_flags_conflict_with_required_steps_surfaces_policy_conflict() {
+    let ws = temp_workspace("full-policy-conflict");
+    let tests_dir = ws.join("tests");
+    std::fs::create_dir_all(&tests_dir).expect("mkdir tests");
+    std::fs::write(
+        tests_dir.join("app.pass.fozzy.json"),
+        fixture("example.fozzy.json"),
+    )
+    .expect("write scenario");
+    let out = run_cli(&[
+        "--cwd".into(),
+        ws.to_string_lossy().to_string(),
+        "full".into(),
+        "--scenario-root".into(),
+        "tests".into(),
+        "--required-steps".into(),
+        "usage,version,test_det".into(),
+        "--require-topology-coverage".into(),
+        ".".into(),
+        "--json".into(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let doc = parse_json_stdout(&out);
+    assert_eq!(
+        full_step_status(&doc, "policy_conflict"),
+        Some("failed".to_string())
+    );
+}
+
+#[test]
 fn map_hotspots_services_and_suites_emit_expected_schema() {
     let ws = temp_workspace("map-schema");
     let services_dir = ws.join("services").join("payments");
@@ -1429,7 +1642,16 @@ fn map_hotspots_services_and_suites_emit_expected_schema() {
             .get("schemaVersion")
             .and_then(|v| v.as_str())
             .unwrap_or_default(),
-        "fozzy.map_suites.v2"
+        "fozzy.map_suites.v3"
+    );
+    assert!(
+        suites_doc
+            .get("suites")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|s| s.get("coverageEvidence"))
+            .is_some(),
+        "map suites should emit explainable coverage evidence"
     );
     assert_eq!(
         suites_doc
@@ -1447,5 +1669,80 @@ fn map_hotspots_services_and_suites_emit_expected_schema() {
                 .get("coveredHotspotCount")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0)
+    );
+}
+
+#[test]
+fn gate_targeted_profile_runs_scoped_strict_bundle() {
+    let ws = temp_workspace("gate-targeted");
+    let tests_dir = ws.join("tests");
+    std::fs::create_dir_all(&tests_dir).expect("mkdir tests");
+    std::fs::write(
+        tests_dir.join("gateway.pass.fozzy.json"),
+        br#"{
+  "version": 1,
+  "name": "gateway-pass",
+  "steps": [
+    { "type": "assert_eq_int", "a": 1, "b": 1 }
+  ]
+}"#,
+    )
+    .expect("write gateway scenario");
+    std::fs::write(
+        tests_dir.join("other.pass.fozzy.json"),
+        br#"{
+  "version": 1,
+  "name": "other-pass",
+  "steps": [
+    { "type": "assert_eq_int", "a": 2, "b": 2 }
+  ]
+}"#,
+    )
+    .expect("write other scenario");
+
+    let out = Command::new(env!("CARGO_BIN_EXE_fozzy"))
+        .args([
+            "--cwd",
+            ws.to_str().expect("ws str"),
+            "gate",
+            "--profile",
+            "targeted",
+            "--scenario-root",
+            tests_dir.to_str().expect("tests str"),
+            "--scope",
+            "gateway",
+            "--seed",
+            "1337",
+            "--doctor-runs",
+            "2",
+            "--json",
+        ])
+        .output()
+        .expect("run gate");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "gate stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc = parse_json_stdout(&out);
+    assert_eq!(
+        doc.get("schemaVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+        "fozzy.gate_report.v1"
+    );
+    assert_eq!(
+        doc.get("profile")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+        "targeted"
+    );
+    assert_eq!(
+        doc.get("matchedScenarios")
+            .and_then(|v| v.as_array())
+            .map(|v| v.len())
+            .unwrap_or_default(),
+        1
     );
 }

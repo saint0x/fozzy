@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -119,6 +120,8 @@ pub enum FindingKind {
     Hang,
     Invariant,
     Checker,
+    InputInvalid,
+    TargetBehavior,
 }
 
 pub fn collapse_findings(findings: Vec<Finding>) -> Vec<Finding> {
@@ -171,6 +174,8 @@ pub struct RunSummary {
     pub finished_at: String,
     #[serde(rename = "durationMs")]
     pub duration_ms: u64,
+    #[serde(rename = "durationNs", default)]
+    pub duration_ns: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tests: Option<TestCounts>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -251,6 +256,8 @@ pub struct RunManifest {
     pub finished_at: String,
     #[serde(rename = "durationMs")]
     pub duration_ms: u64,
+    #[serde(rename = "durationNs", default)]
+    pub duration_ns: u64,
     #[serde(rename = "tracePath", skip_serializing_if = "Option::is_none")]
     pub trace_path: Option<String>,
     #[serde(rename = "reportPath", skip_serializing_if = "Option::is_none")]
@@ -287,6 +294,7 @@ pub fn write_run_manifest(
         started_at: summary.started_at.clone(),
         finished_at: summary.finished_at.clone(),
         duration_ms: summary.duration_ms,
+        duration_ns: summary.duration_ns,
         trace_path: summary.identity.trace_path.clone(),
         report_path: summary.identity.report_path.clone(),
         artifacts_dir: summary.identity.artifacts_dir.clone(),
@@ -301,6 +309,15 @@ pub fn write_run_manifest(
     let out = artifacts_dir.join("manifest.json");
     std::fs::write(&out, serde_json::to_vec_pretty(&manifest)?)?;
     Ok(out)
+}
+
+pub fn duration_fields(elapsed: Duration) -> (u64, u64) {
+    let duration_ns = elapsed.as_nanos().min(u128::from(u64::MAX)) as u64;
+    if duration_ns == 0 {
+        return (0, 0);
+    }
+    let rounded_ms = duration_ns.saturating_add(999_999) / 1_000_000;
+    (rounded_ms.max(1), duration_ns)
 }
 
 pub fn render_junit_xml(summary: &RunSummary) -> String {
@@ -438,5 +455,12 @@ mod tests {
             collapsed[0].message.contains("repeated 2 times"),
             "expected repetition count to be appended"
         );
+    }
+
+    #[test]
+    fn duration_fields_round_sub_ms_to_non_zero_ms() {
+        let (ms, ns) = duration_fields(Duration::from_nanos(500_000));
+        assert_eq!(ms, 1);
+        assert_eq!(ns, 500_000);
     }
 }

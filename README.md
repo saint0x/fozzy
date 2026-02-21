@@ -37,6 +37,7 @@ Fozzy uses deterministic-first capability backends, with host execution availabl
 - HTTP:
 `scripted` (`http_when` + `http_request`) by default, optional host mode via `--http-backend host`.
 `http_request` supports request headers and response-header assertions (`expect_headers`) in both scripted and host modes.
+`http_when` can also be used with host backend as a response assertion rule (match by absolute URL or request path like `/v1/me`).
 Host HTTP backend supports both `http://` and `https://` endpoints.
 
 Host backends are non-deterministic execution modes and are rejected with `--det`.
@@ -57,9 +58,10 @@ fozzy env --json
 - `fozzy replay`: reproduce a recorded trace.
 - `fozzy shrink`: minimize failing traces.
 - `fozzy ci`: local gate bundle (verify + replay + artifact integrity + optional flake budget).
+- `fozzy gate`: lightweight strict targeted gate for change-scoped validation.
 - `fozzy report`: render/query reports.
 - `fozzy memory`: inspect memory graphs, leak tops, and memory diffs.
-- `fozzy artifacts`: list/export/pack run artifacts.
+- `fozzy artifacts`: list/export/pack/bundle run artifacts.
 - `fozzy map`: language-agnostic code topology mapping for hotspot-driven suite planning.
   `fozzy map suites` defaults to a `pedantic` coverage profile.
 

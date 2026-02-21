@@ -33,6 +33,12 @@ pub enum ArtifactCommand {
         #[arg(long)]
         out: PathBuf,
     },
+    Bundle {
+        #[arg(value_name = "RUN_OR_TRACE")]
+        run: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +162,10 @@ pub fn artifacts_command(
         }
         ArtifactCommand::Pack { run, out } => {
             export_reproducer_pack(config, run, out)?;
+            Ok(ArtifactOutput::Exported)
+        }
+        ArtifactCommand::Bundle { run, out } => {
+            export_gate_bundle(config, run, out)?;
             Ok(ArtifactOutput::Exported)
         }
     }
@@ -361,6 +371,100 @@ fn export_reproducer_pack(config: &Config, run: &str, out: &Path) -> FozzyResult
     res
 }
 
+fn export_gate_bundle(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
+    let trace_path = resolve_trace_path(config, run)?;
+    let trace_input = trace_path.to_string_lossy().to_string();
+
+    let replay = crate::replay_trace(
+        config,
+        crate::TracePath::new(trace_path.clone()),
+        &crate::ReplayOptions {
+            step: false,
+            until: None,
+            dump_events: false,
+            reporter: crate::Reporter::Json,
+        },
+    )?;
+    let ci = crate::ci_evaluate(
+        config,
+        &crate::CiOptions {
+            trace: trace_path.clone(),
+            flake_runs: Vec::new(),
+            flake_budget_pct: None,
+            strict: true,
+        },
+    )?;
+    let verify = crate::verify_trace_file(&trace_path)?;
+
+    let mut files: Vec<PathBuf> = vec![trace_path.clone()];
+    if let Some(parent) = trace_path.parent() {
+        for name in ["report.json", "manifest.json"] {
+            let path = parent.join(name);
+            if path.exists() && path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+
+    let meta_dir = std::env::temp_dir().join(format!("fozzy-bundle-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&meta_dir)?;
+    let meta_files = vec![
+        (
+            "env.json",
+            serde_json::to_vec_pretty(&crate::env_info(config))?,
+        ),
+        (
+            "version.json",
+            serde_json::to_vec_pretty(&crate::version_info())?,
+        ),
+        (
+            "trace_verify.report.json",
+            serde_json::to_vec_pretty(&verify)?,
+        ),
+        (
+            "replay.report.json",
+            serde_json::to_vec_pretty(&replay.summary)?,
+        ),
+        ("ci.report.json", serde_json::to_vec_pretty(&ci)?),
+        (
+            "bundle.json",
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schemaVersion": "fozzy.bundle_report.v1",
+                "source": run,
+                "trace": trace_input,
+                "ciOk": ci.ok
+            }))?,
+        ),
+    ];
+    for (name, bytes) in meta_files {
+        std::fs::write(meta_dir.join(name), bytes)?;
+    }
+    for name in [
+        "env.json",
+        "version.json",
+        "trace_verify.report.json",
+        "replay.report.json",
+        "ci.report.json",
+        "bundle.json",
+    ] {
+        files.push(meta_dir.join(name));
+    }
+    files.sort();
+    files.dedup();
+
+    let res = if out
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("zip"))
+    {
+        export_artifacts_zip(&files, out)
+    } else {
+        export_artifacts_dir_exact(&files, out)
+    };
+    let _ = std::fs::remove_dir_all(meta_dir);
+    res
+}
+
 fn export_artifacts(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
     let strict_bundle = !is_direct_trace_input(run);
     let entries = artifacts_list(config, run)?;
@@ -392,6 +496,27 @@ fn export_artifacts(config: &Config, run: &str, out: &Path) -> FozzyResult<()> {
     }
 
     export_artifacts_dir_exact(&files, out)
+}
+
+fn resolve_trace_path(config: &Config, run: &str) -> FozzyResult<PathBuf> {
+    let input = PathBuf::from(run);
+    if input.exists()
+        && input.is_file()
+        && input
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case("fozzy"))
+    {
+        return Ok(input);
+    }
+    let trace = resolve_artifacts_dir(config, run)?.join("trace.fozzy");
+    if !trace.exists() {
+        return Err(FozzyError::InvalidArgument(format!(
+            "no recorded trace found for {run:?}; expected {}",
+            trace.display()
+        )));
+    }
+    Ok(trace)
 }
 
 fn artifacts_diff(config: &Config, left: &str, right: &str) -> FozzyResult<ArtifactDiff> {
@@ -1540,5 +1665,59 @@ mod tests {
         let err_export =
             export_artifacts(&cfg, "r1", &out_export).expect_err("must reject symlink parent");
         assert!(err_export.to_string().contains("symlinked output path"));
+    }
+
+    #[test]
+    fn bundle_includes_replay_ci_and_env_reports() {
+        let root = std::env::temp_dir().join(format!("fozzy-bundle-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let trace = root.join("trace.fozzy");
+        let raw = r#"{
+          "format":"fozzy-trace",
+          "version":2,
+          "engine":{"version":"0.1.0"},
+          "mode":"run",
+          "scenario_path":null,
+          "scenario":{"version":1,"name":"x","steps":[]},
+          "decisions":[],
+          "events":[],
+          "summary":{
+            "status":"pass",
+            "mode":"run",
+            "identity":{"runId":"r1","seed":1},
+            "startedAt":"2026-01-01T00:00:00Z",
+            "finishedAt":"2026-01-01T00:00:00Z",
+            "durationMs":0
+          }
+        }"#;
+        std::fs::write(&trace, raw).expect("write trace");
+        let out = root.join("bundle.zip");
+        let cfg = crate::Config {
+            base_dir: root.join(".fozzy"),
+            reporter: crate::Reporter::Pretty,
+            proc_backend: crate::ProcBackend::Scripted,
+            fs_backend: crate::FsBackend::Virtual,
+            http_backend: crate::HttpBackend::Scripted,
+            mem_track: false,
+            mem_limit_mb: None,
+            mem_fail_after: None,
+            fail_on_leak: false,
+            leak_budget: None,
+            mem_artifacts: false,
+            mem_fragmentation_seed: None,
+            mem_pressure_wave: None,
+        };
+
+        export_gate_bundle(&cfg, &trace.display().to_string(), &out).expect("bundle");
+        let file = std::fs::File::open(&out).expect("zip");
+        let mut z = zip::ZipArchive::new(file).expect("zip parse");
+        let mut names = Vec::new();
+        for i in 0..z.len() {
+            names.push(z.by_index(i).expect("entry").name().to_string());
+        }
+        assert!(names.iter().any(|n| n == "trace.fozzy"));
+        assert!(names.iter().any(|n| n == "replay.report.json"));
+        assert!(names.iter().any(|n| n == "ci.report.json"));
+        assert!(names.iter().any(|n| n == "env.json"));
     }
 }

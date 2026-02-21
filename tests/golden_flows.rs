@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use fozzy::{
     Config, ExitStatus, ExploreOptions, FsBackend, FuzzMode, FuzzOptions, FuzzTarget, HttpBackend,
-    ProcBackend, RecordCollisionPolicy, ReplayOptions, Reporter, RunOptions, ScenarioPath,
-    ScheduleStrategy, ShrinkMinimize, ShrinkOptions, TracePath, explore, fuzz, replay_trace,
-    run_scenario, shrink_trace,
+    InitTemplate, InitTestType, ProcBackend, RecordCollisionPolicy, ReplayOptions, Reporter,
+    RunOptions, ScenarioPath, ScheduleStrategy, ShrinkMinimize, ShrinkOptions, TracePath, explore,
+    fuzz, init_project, replay_trace, run_scenario, shrink_trace,
 };
 
 fn temp_workspace(name: &str) -> PathBuf {
@@ -302,4 +302,36 @@ fn golden_explore_record_replay_shrink_replay_min() {
         outcome_class(shrunk.result.summary.status),
         outcome_class(replay_min.summary.status)
     );
+}
+
+#[test]
+fn golden_init_scaffold_distributed_pass_succeeds_in_explore() {
+    let ws = temp_workspace("init-explore");
+    let prev = std::env::current_dir().expect("cwd");
+    std::env::set_current_dir(&ws).expect("chdir");
+    let cfg = Config::default();
+    init_project(&cfg, &InitTemplate::Rust, true, &[InitTestType::Explore]).expect("init");
+    let scenario = ws.join("tests/distributed.pass.fozzy.json");
+    let run = explore(
+        &cfg,
+        ScenarioPath::new(scenario),
+        &ExploreOptions {
+            seed: Some(7),
+            time: None,
+            steps: Some(100),
+            nodes: Some(3),
+            faults: Some("none".to_string()),
+            schedule: ScheduleStrategy::CoverageGuided,
+            checker: None,
+            record_trace_to: None,
+            shrink: false,
+            minimize: false,
+            reporter: Reporter::Json,
+            record_collision: RecordCollisionPolicy::Append,
+            memory: fozzy::MemoryOptions::default(),
+        },
+    )
+    .expect("explore run");
+    std::env::set_current_dir(prev).expect("restore cwd");
+    assert_eq!(run.summary.status, ExitStatus::Pass);
 }

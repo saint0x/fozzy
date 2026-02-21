@@ -14,7 +14,8 @@ const SUITE_FUZZ: &str = "fuzz_inputs";
 const SUITE_EXPLORE: &str = "explore_schedule_faults";
 const SUITE_HOST: &str = "host_backends_run";
 const SUITE_MEMORY: &str = "memory_graph_diff_top";
-const SUITE_SHRINK: &str = "shrink_failure_trace";
+const SUITE_SHRINK_EXERCISED: &str = "shrink_exercised";
+const SUITE_SHRINK_FAILURE: &str = "shrink_failure_trace";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ValueEnum, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -165,6 +166,8 @@ pub struct SuiteRecommendation {
     pub required_suites: Vec<String>,
     #[serde(rename = "coveredSuites")]
     pub covered_suites: Vec<String>,
+    #[serde(rename = "coverageEvidence")]
+    pub coverage_evidence: Vec<SuiteCoverageEvidence>,
     #[serde(rename = "missingRequiredSuites")]
     pub missing_required_suites: Vec<String>,
     #[serde(rename = "whyRequired")]
@@ -172,6 +175,14 @@ pub struct SuiteRecommendation {
     pub reasons: Vec<String>,
     #[serde(rename = "recommendedSuites")]
     pub recommended_suites: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuiteCoverageEvidence {
+    pub suite: String,
+    #[serde(rename = "matchedScenarios")]
+    pub matched_scenarios: Vec<String>,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone)]
@@ -202,12 +213,14 @@ struct ScanRecord {
 
 #[derive(Debug, Clone)]
 struct ScenarioFact {
-    haystack: String,
+    path: String,
+    tokens: BTreeSet<String>,
     has_explore: bool,
     has_fuzz: bool,
     has_host: bool,
     has_memory: bool,
     has_failure: bool,
+    has_shrink: bool,
 }
 
 pub fn map_command(_config: &Config, command: &MapCommand) -> FozzyResult<serde_json::Value> {
@@ -283,7 +296,12 @@ pub fn map_suites(opt: &MapSuitesOptions) -> FozzyResult<MapSuitesReport> {
         }
 
         let required_suites = required_suites_for_hotspot(opt.profile, &hotspot.signals);
-        let covered_suites = covered_suites_for_hotspot(&required_suites, &hints, &scenario_facts);
+        let coverage_evidence =
+            covered_suites_for_hotspot(&required_suites, &hints, &scenario_facts);
+        let covered_suites = coverage_evidence
+            .iter()
+            .map(|e| e.suite.clone())
+            .collect::<Vec<_>>();
         let missing_required_suites = required_suites
             .iter()
             .filter(|s| !covered_suites.contains(*s))
@@ -312,6 +330,7 @@ pub fn map_suites(opt: &MapSuitesOptions) -> FozzyResult<MapSuitesReport> {
             coverage_hints: hints,
             required_suites,
             covered_suites,
+            coverage_evidence,
             missing_required_suites,
             why_required,
             reasons: hotspot.reasons,
@@ -329,7 +348,7 @@ pub fn map_suites(opt: &MapSuitesOptions) -> FozzyResult<MapSuitesReport> {
     let uncovered_hotspot_count = required_hotspot_count.saturating_sub(covered_hotspot_count);
 
     Ok(MapSuitesReport {
-        schema_version: "fozzy.map_suites.v2".to_string(),
+        schema_version: "fozzy.map_suites.v3".to_string(),
         root: facts.root.display().to_string(),
         scenario_root: opt.scenario_root.display().to_string(),
         scanned_files: facts.scanned_files,
@@ -365,8 +384,11 @@ fn required_suites_for_hotspot(profile: TopologyProfile, s: &HotspotSignals) -> 
             if s.external_signals > 0 {
                 out.insert(SUITE_HOST.to_string());
             }
+            if s.failure_signals > 0 || s.branch_signals > 25 {
+                out.insert(SUITE_SHRINK_EXERCISED.to_string());
+            }
             if s.failure_signals > 0 {
-                out.insert(SUITE_SHRINK.to_string());
+                out.insert(SUITE_SHRINK_FAILURE.to_string());
             }
             if s.memory_signals > 2 {
                 out.insert(SUITE_MEMORY.to_string());
@@ -376,7 +398,10 @@ fn required_suites_for_hotspot(profile: TopologyProfile, s: &HotspotSignals) -> 
             }
         }
         TopologyProfile::Pedantic => {
-            out.insert(SUITE_SHRINK.to_string());
+            out.insert(SUITE_SHRINK_EXERCISED.to_string());
+            if s.failure_signals > 0 {
+                out.insert(SUITE_SHRINK_FAILURE.to_string());
+            }
             if s.concurrency_signals > 0 || s.failure_signals >= 4 {
                 out.insert(SUITE_EXPLORE.to_string());
             }
@@ -395,7 +420,8 @@ fn required_suites_for_hotspot(profile: TopologyProfile, s: &HotspotSignals) -> 
             out.insert(SUITE_EXPLORE.to_string());
             out.insert(SUITE_HOST.to_string());
             out.insert(SUITE_MEMORY.to_string());
-            out.insert(SUITE_SHRINK.to_string());
+            out.insert(SUITE_SHRINK_EXERCISED.to_string());
+            out.insert(SUITE_SHRINK_FAILURE.to_string());
         }
     }
 
@@ -413,7 +439,10 @@ fn recommended_suites_for_hotspot(s: &HotspotSignals) -> Vec<String> {
         out.insert(SUITE_HOST.to_string());
     }
     if s.failure_signals > 0 {
-        out.insert(SUITE_SHRINK.to_string());
+        out.insert(SUITE_SHRINK_FAILURE.to_string());
+    }
+    if s.failure_signals > 0 || s.branch_signals > 20 {
+        out.insert(SUITE_SHRINK_EXERCISED.to_string());
     }
     if s.memory_signals > 0 {
         out.insert(SUITE_MEMORY.to_string());
@@ -448,20 +477,49 @@ fn covered_suites_for_hotspot(
     required: &[String],
     hints: &[String],
     scenarios: &[ScenarioFact],
-) -> Vec<String> {
-    required
+) -> Vec<SuiteCoverageEvidence> {
+    let hint_tokens = hints
         .iter()
-        .filter(|suite| {
-            scenarios
-                .iter()
-                .any(|s| matches_suite_signal(s, suite.as_str()) && matches_hints(s, hints))
-        })
-        .cloned()
-        .collect()
-}
+        .flat_map(|h| tokenize(h).into_iter())
+        .collect::<BTreeSet<_>>();
 
-fn matches_hints(s: &ScenarioFact, hints: &[String]) -> bool {
-    hints.iter().any(|h| s.haystack.contains(h))
+    let mut out = Vec::new();
+    for suite in required {
+        let matches = scenarios
+            .iter()
+            .filter(|s| matches_suite_signal(s, suite.as_str()))
+            .filter(|s| {
+                suite == SUITE_TEST_DET
+                    || suite == SUITE_RUN_REPLAY_CI
+                    || !hint_tokens.is_disjoint(&s.tokens)
+            })
+            .collect::<Vec<_>>();
+        if matches.is_empty() {
+            continue;
+        }
+        let matched_scenarios = matches.iter().map(|s| s.path.clone()).collect::<Vec<_>>();
+        let shared = matches
+            .iter()
+            .flat_map(|s| hint_tokens.intersection(&s.tokens).cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .take(6)
+            .collect::<Vec<_>>();
+        let reason = if shared.is_empty() {
+            "suite signal matched".to_string()
+        } else {
+            format!(
+                "suite signal matched; shared attribution tokens: {}",
+                shared.join(", ")
+            )
+        };
+        out.push(SuiteCoverageEvidence {
+            suite: suite.clone(),
+            matched_scenarios,
+            reason,
+        });
+    }
+    out
 }
 
 fn matches_suite_signal(s: &ScenarioFact, suite: &str) -> bool {
@@ -472,7 +530,8 @@ fn matches_suite_signal(s: &ScenarioFact, suite: &str) -> bool {
         SUITE_EXPLORE => s.has_explore,
         SUITE_HOST => s.has_host,
         SUITE_MEMORY => s.has_memory,
-        SUITE_SHRINK => s.has_failure,
+        SUITE_SHRINK_EXERCISED => s.has_shrink,
+        SUITE_SHRINK_FAILURE => s.has_failure && s.has_shrink,
         _ => false,
     }
 }
@@ -490,6 +549,7 @@ fn scenario_fact(path: &Path) -> FozzyResult<ScenarioFact> {
         .unwrap_or_default()
         .to_ascii_lowercase();
     let haystack = format!("{} {}", path.to_string_lossy().to_ascii_lowercase(), lower);
+    let tokens = tokenize(&haystack);
 
     let has_explore = name.contains("explore") || lower.contains("\"distributed\"");
     let has_fuzz = name.contains("fuzz") || lower.contains("\"mode\":\"fuzz\"");
@@ -503,14 +563,20 @@ fn scenario_fact(path: &Path) -> FozzyResult<ScenarioFact> {
         || name.contains("panic")
         || lower.contains("\"type\":\"fail\"")
         || lower.contains("\"type\":\"panic\"");
+    let has_shrink = name.contains("shrink")
+        || lower.contains("\"minimize\"")
+        || lower.contains("shrink_trace")
+        || lower.contains("shrink");
 
     Ok(ScenarioFact {
-        haystack,
+        path: path.display().to_string(),
+        tokens,
         has_explore,
         has_fuzz,
         has_host,
         has_memory,
         has_failure,
+        has_shrink,
     })
 }
 
@@ -650,35 +716,55 @@ fn hotspot_hints(h: &MapHotspot) -> Vec<String> {
     out.into_iter().filter(|s| s.len() >= 3).collect()
 }
 
+fn tokenize(input: &str) -> BTreeSet<String> {
+    input
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| s.len() >= 3)
+        .map(|s| s.to_ascii_lowercase())
+        .collect()
+}
+
 fn should_skip_path(p: &Path) -> bool {
     let Some(parent) = p.parent() else {
         return false;
     };
     parent.components().any(|component| {
-        component
-            .as_os_str()
-            .to_str()
-            .is_some_and(|segment| {
-                [
-                    ".git",
-                    "target",
-                    "node_modules",
-                    ".fozzy",
-                    "dist",
-                    "build",
-                    "out",
-                    "coverage",
-                    "vendor",
-                    ".next",
-                    ".tmp",
-                ]
-                .iter()
-                .any(|needle| segment.eq_ignore_ascii_case(needle))
-            })
+        component.as_os_str().to_str().is_some_and(|segment| {
+            [
+                ".git",
+                "target",
+                "node_modules",
+                ".fozzy",
+                "dist",
+                "build",
+                "out",
+                "coverage",
+                "vendor",
+                ".next",
+                ".tmp",
+            ]
+            .iter()
+            .any(|needle| segment.eq_ignore_ascii_case(needle))
+        })
     })
 }
 
 fn is_candidate_file(p: &Path) -> bool {
+    if p.file_name().and_then(|s| s.to_str()).is_some_and(|n| {
+        matches!(
+            n,
+            "package-lock.json"
+                | "yarn.lock"
+                | "pnpm-lock.yaml"
+                | "Cargo.lock"
+                | "Gemfile.lock"
+                | "Pipfile.lock"
+                | "poetry.lock"
+                | "composer.lock"
+        )
+    }) {
+        return false;
+    }
     if p.file_name()
         .and_then(|s| s.to_str())
         .is_some_and(|n| n.eq_ignore_ascii_case("dockerfile"))

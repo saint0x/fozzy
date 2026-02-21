@@ -122,7 +122,7 @@ enum Command {
         record: Option<PathBuf>,
 
         /// Behavior when --record target exists: error, overwrite, or append with numeric suffix.
-        #[arg(long, default_value = "error")]
+        #[arg(long, default_value = "append")]
         record_collision: RecordCollisionPolicy,
 
         /// Stop on first failure.
@@ -182,7 +182,7 @@ enum Command {
         record: Option<PathBuf>,
 
         /// Behavior when --record target exists: error, overwrite, or append with numeric suffix.
-        #[arg(long, default_value = "error")]
+        #[arg(long, default_value = "append")]
         record_collision: RecordCollisionPolicy,
 
         #[arg(long)]
@@ -244,7 +244,7 @@ enum Command {
         minimize: bool,
 
         /// Behavior when --record target exists: error, overwrite, or append with numeric suffix.
-        #[arg(long, default_value = "error")]
+        #[arg(long, default_value = "append")]
         record_collision: RecordCollisionPolicy,
 
         #[arg(long)]
@@ -431,6 +431,25 @@ enum Command {
         flake_budget: Option<FlakeBudget>,
     },
 
+    /// Run strict deterministic gate checks with optional scoped targeting.
+    Gate {
+        /// Gate profile.
+        #[arg(long, default_value = "targeted")]
+        profile: GateProfile,
+        /// Root directory scanned for `*.fozzy.json` scenarios.
+        #[arg(long, default_value = "tests")]
+        scenario_root: PathBuf,
+        /// Substring scope matcher applied to scenario paths (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        scope: Vec<String>,
+        /// Deterministic seed for reproducible runs.
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Number of repeated deterministic runs in doctor deep audit.
+        #[arg(long, default_value_t = 5)]
+        doctor_runs: u32,
+    },
+
     /// Print version and build info
     Version,
 
@@ -506,6 +525,22 @@ enum TraceCommand {
     Verify { path: PathBuf },
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum GateProfile {
+    Targeted,
+}
+
+impl clap::ValueEnum for GateProfile {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::Targeted]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        Some(clap::builder::PossibleValue::new("targeted"))
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 enum FullStepStatus {
@@ -543,6 +578,20 @@ struct FullScenarioDiscovery {
     steps: Vec<PathBuf>,
     distributed: Vec<PathBuf>,
     parse_errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct GateReport {
+    #[serde(rename = "schemaVersion")]
+    schema_version: String,
+    profile: GateProfile,
+    strict: bool,
+    #[serde(rename = "scenarioRoot")]
+    scenario_root: String,
+    scopes: Vec<String>,
+    #[serde(rename = "matchedScenarios")]
+    matched_scenarios: Vec<String>,
+    steps: Vec<FullStepResult>,
 }
 
 fn main() -> ExitCode {
@@ -1064,6 +1113,34 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Gate {
+            profile,
+            scenario_root,
+            scope,
+            seed,
+            doctor_runs,
+        } => {
+            let report = run_gate_command(
+                config,
+                *profile,
+                scenario_root,
+                scope,
+                *seed,
+                *doctor_runs,
+                strict_enabled(cli),
+            )?;
+            let has_failed = report
+                .steps
+                .iter()
+                .any(|s| matches!(s.status, FullStepStatus::Failed));
+            logger.print_serialized(&report)?;
+            Ok(if has_failed {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
+
         Command::Version => {
             let info = fozzy::version_info();
             logger.print_serialized(&info)?;
@@ -1084,20 +1161,54 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
 
         Command::Validate { scenario } => {
             let scenario_path = ScenarioPath::new(scenario.clone());
-            let out = match fozzy::Scenario::load(&scenario_path) {
-                Ok(loaded) => match loaded.validate() {
+            let out = match fozzy::Scenario::load_file(&scenario_path) {
+                Ok(fozzy::ScenarioFile::Steps(steps)) => {
+                    let loaded = fozzy::Scenario {
+                        name: steps.name.clone(),
+                        steps: steps.steps.clone(),
+                    };
+                    match loaded.validate() {
+                        Ok(()) => serde_json::json!({
+                            "ok": true,
+                            "scenario": scenario.display().to_string(),
+                            "variant": "steps",
+                            "name": loaded.name,
+                            "steps": loaded.steps.len()
+                        }),
+                        Err(err) => serde_json::json!({
+                            "ok": false,
+                            "scenario": scenario.display().to_string(),
+                            "variant": "steps",
+                            "error": err.to_string()
+                        }),
+                    }
+                }
+                Ok(fozzy::ScenarioFile::Distributed(dist)) => match dist.validate() {
                     Ok(()) => serde_json::json!({
                         "ok": true,
                         "scenario": scenario.display().to_string(),
-                        "name": loaded.name,
-                        "steps": loaded.steps.len()
+                        "variant": "distributed",
+                        "name": dist.name,
+                        "steps": dist.distributed.steps.len(),
+                        "invariants": dist.distributed.invariants.len()
                     }),
                     Err(err) => serde_json::json!({
                         "ok": false,
                         "scenario": scenario.display().to_string(),
+                        "variant": "distributed",
                         "error": err.to_string()
                     }),
                 },
+                Ok(fozzy::ScenarioFile::Suites(suites)) => serde_json::json!({
+                    "ok": false,
+                    "scenario": scenario.display().to_string(),
+                    "variant": "suites",
+                    "error": format!(
+                        "scenario file {} uses `suites` without an executable step DSL (v0.1 only supports `steps` or `distributed` for execution)",
+                        scenario.display()
+                    ),
+                    "name": suites.name
+                }),
                 Err(err) => serde_json::json!({
                     "ok": false,
                     "scenario": scenario.display().to_string(),
@@ -1160,6 +1271,332 @@ fn run_command(cli: &Cli, config: &Config, logger: &CliLogger) -> anyhow::Result
 }
 
 #[allow(clippy::too_many_arguments)]
+fn run_gate_command(
+    config: &Config,
+    profile: GateProfile,
+    scenario_root: &Path,
+    scopes: &[String],
+    seed: Option<u64>,
+    doctor_runs: u32,
+    strict: bool,
+) -> anyhow::Result<GateReport> {
+    let mut steps = Vec::<FullStepResult>::new();
+    let mut push = |name: &str, status: FullStepStatus, detail: String| {
+        steps.push(FullStepResult {
+            name: name.to_string(),
+            status,
+            detail,
+        });
+    };
+
+    let discovered = discover_scenarios(scenario_root);
+    if !discovered.parse_errors.is_empty() {
+        push(
+            "discover",
+            FullStepStatus::Failed,
+            format!("parse_errors={}", discovered.parse_errors.join(" | ")),
+        );
+    } else {
+        push(
+            "discover",
+            FullStepStatus::Passed,
+            format!(
+                "step_scenarios={} distributed_scenarios={}",
+                discovered.steps.len(),
+                discovered.distributed.len()
+            ),
+        );
+    }
+
+    let scope_tokens: Vec<String> = scopes
+        .iter()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut targets: Vec<PathBuf> = discovered
+        .steps
+        .iter()
+        .filter(|p| {
+            if scope_tokens.is_empty() {
+                return true;
+            }
+            let key = p.to_string_lossy().to_ascii_lowercase();
+            scope_tokens.iter().any(|token| key.contains(token))
+        })
+        .cloned()
+        .collect();
+    targets.sort();
+    let matched_scenarios: Vec<String> = targets
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    if targets.is_empty() {
+        push(
+            "scope_match",
+            FullStepStatus::Failed,
+            "no step scenarios matched requested scope".to_string(),
+        );
+        return Ok(GateReport {
+            schema_version: "fozzy.gate_report.v1".to_string(),
+            profile,
+            strict,
+            scenario_root: scenario_root.display().to_string(),
+            scopes: scope_tokens,
+            matched_scenarios,
+            steps,
+        });
+    }
+    push(
+        "scope_match",
+        FullStepStatus::Passed,
+        format!("matched={}", targets.len()),
+    );
+
+    let primary = targets
+        .iter()
+        .find(|p| is_preferred_step_scenario(p))
+        .cloned()
+        .unwrap_or_else(|| targets[0].clone());
+
+    let memory = MemoryOptions {
+        track: true,
+        limit_mb: config.mem_limit_mb,
+        fail_after_allocs: config.mem_fail_after,
+        fail_on_leak: config.fail_on_leak,
+        leak_budget_bytes: config.leak_budget,
+        artifacts: true,
+        fragmentation_seed: config.mem_fragmentation_seed,
+        pressure_wave: config.mem_pressure_wave.clone(),
+    };
+
+    match fozzy::doctor(
+        config,
+        &fozzy::DoctorOptions {
+            deep: true,
+            scenario: Some(ScenarioPath::new(primary.clone())),
+            runs: doctor_runs.max(2),
+            seed,
+        },
+    ) {
+        Ok(report) => {
+            let policy_ok = !strict
+                || (report.issues.is_empty()
+                    && report
+                        .nondeterminism_signals
+                        .as_ref()
+                        .map_or(true, |signals| signals.is_empty()));
+            push(
+                "doctor_deep",
+                if report.ok && policy_ok {
+                    FullStepStatus::Passed
+                } else {
+                    FullStepStatus::Failed
+                },
+                format!(
+                    "ok={} policy_ok={} scenario={}",
+                    report.ok,
+                    policy_ok,
+                    primary.display()
+                ),
+            );
+        }
+        Err(err) => push("doctor_deep", FullStepStatus::Failed, err.to_string()),
+    }
+
+    let test_globs: Vec<String> = targets
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    match fozzy::run_tests(
+        config,
+        &test_globs,
+        &RunOptions {
+            det: true,
+            seed,
+            timeout: None,
+            reporter: Reporter::Json,
+            record_trace_to: None,
+            filter: None,
+            jobs: None,
+            fail_fast: false,
+            record_collision: RecordCollisionPolicy::Error,
+            proc_backend: config.proc_backend,
+            fs_backend: config.fs_backend,
+            http_backend: config.http_backend,
+            memory: memory.clone(),
+        },
+    ) {
+        Ok(test) => {
+            let strict_ok = enforce_strict_summary(strict, &test.summary).is_ok();
+            push(
+                "test_det_strict",
+                if strict_ok {
+                    FullStepStatus::Passed
+                } else {
+                    FullStepStatus::Failed
+                },
+                format!(
+                    "status={:?} strict_ok={} run_id={}",
+                    test.summary.status, strict_ok, test.summary.identity.run_id
+                ),
+            );
+        }
+        Err(err) => push("test_det_strict", FullStepStatus::Failed, err.to_string()),
+    }
+
+    let trace_path = std::env::temp_dir().join(format!(
+        "fozzy-gate-{}-{}.trace.fozzy",
+        profile_string(profile),
+        uuid::Uuid::new_v4()
+    ));
+    let mut primary_status: Option<ExitStatus> = None;
+    match fozzy::run_scenario(
+        config,
+        ScenarioPath::new(primary.clone()),
+        &RunOptions {
+            det: true,
+            seed,
+            timeout: None,
+            reporter: Reporter::Json,
+            record_trace_to: Some(trace_path.clone()),
+            filter: None,
+            jobs: None,
+            fail_fast: false,
+            record_collision: RecordCollisionPolicy::Overwrite,
+            proc_backend: config.proc_backend,
+            fs_backend: config.fs_backend,
+            http_backend: config.http_backend,
+            memory,
+        },
+    ) {
+        Ok(run) => {
+            primary_status = Some(run.summary.status);
+            let strict_ok = enforce_strict_summary(strict, &run.summary).is_ok();
+            push(
+                "run_record_trace",
+                if run.summary.identity.trace_path.is_some() && strict_ok {
+                    FullStepStatus::Passed
+                } else {
+                    FullStepStatus::Failed
+                },
+                format!(
+                    "status={:?} strict_ok={} trace={}",
+                    run.summary.status,
+                    strict_ok,
+                    trace_path.display()
+                ),
+            );
+        }
+        Err(err) => push("run_record_trace", FullStepStatus::Failed, err.to_string()),
+    }
+
+    if trace_path.exists() {
+        match fozzy::verify_trace_file(&trace_path) {
+            Ok(verify) => {
+                let strict_ok = !strict
+                    || (verify.checksum_present
+                        && verify.checksum_valid
+                        && verify.warnings.is_empty());
+                push(
+                    "trace_verify",
+                    if verify.ok && strict_ok {
+                        FullStepStatus::Passed
+                    } else {
+                        FullStepStatus::Failed
+                    },
+                    format!(
+                        "ok={} checksum_present={} checksum_valid={} warnings={}",
+                        verify.ok,
+                        verify.checksum_present,
+                        verify.checksum_valid,
+                        verify.warnings.len()
+                    ),
+                );
+            }
+            Err(err) => push("trace_verify", FullStepStatus::Failed, err.to_string()),
+        }
+
+        match fozzy::replay_trace(
+            config,
+            TracePath::new(trace_path.clone()),
+            &fozzy::ReplayOptions {
+                step: false,
+                until: None,
+                dump_events: false,
+                reporter: Reporter::Json,
+            },
+        ) {
+            Ok(replay) => {
+                let class_ok = primary_status
+                    .map(|s| (s == ExitStatus::Pass) == (replay.summary.status == ExitStatus::Pass))
+                    .unwrap_or(false);
+                let strict_ok = enforce_strict_summary(strict, &replay.summary).is_ok();
+                push(
+                    "replay",
+                    if class_ok && strict_ok {
+                        FullStepStatus::Passed
+                    } else {
+                        FullStepStatus::Failed
+                    },
+                    format!(
+                        "status={:?} class_ok={} strict_ok={}",
+                        replay.summary.status, class_ok, strict_ok
+                    ),
+                );
+            }
+            Err(err) => push("replay", FullStepStatus::Failed, err.to_string()),
+        }
+
+        let ci = fozzy::ci_evaluate(
+            config,
+            &CiOptions {
+                trace: trace_path.clone(),
+                flake_runs: Vec::new(),
+                flake_budget_pct: None,
+                strict,
+            },
+        );
+        match ci {
+            Ok(report) => push(
+                "ci",
+                if report.ok {
+                    FullStepStatus::Passed
+                } else {
+                    FullStepStatus::Failed
+                },
+                format!("ok={} checks={}", report.ok, report.checks.len()),
+            ),
+            Err(err) => push("ci", FullStepStatus::Failed, err.to_string()),
+        }
+    } else {
+        for name in ["trace_verify", "replay", "ci"] {
+            push(
+                name,
+                FullStepStatus::Skipped,
+                "trace was not recorded".to_string(),
+            );
+        }
+    }
+
+    Ok(GateReport {
+        schema_version: "fozzy.gate_report.v1".to_string(),
+        profile,
+        strict,
+        scenario_root: scenario_root.display().to_string(),
+        scopes: scope_tokens,
+        matched_scenarios,
+        steps,
+    })
+}
+
+fn profile_string(profile: GateProfile) -> &'static str {
+    match profile {
+        GateProfile::Targeted => "targeted",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_full_command(
     config: &Config,
     scenario_root: &Path,
@@ -1196,6 +1633,13 @@ fn run_full_command(
         "Place executable scenarios under tests/**/*.fozzy.json; distributed scenarios should use the `distributed` schema."
             .to_string(),
     ];
+    if let Some(conflict) = full_policy_conflict_details(
+        skip_steps,
+        required_steps,
+        require_topology_coverage.is_some(),
+    ) {
+        push("policy_conflict", FullStepStatus::Failed, conflict);
+    }
 
     let usage = fozzy::usage_doc();
     push(
@@ -2178,6 +2622,9 @@ fn apply_full_policy_filters(
 
     for step in steps {
         let key = step.name.to_ascii_lowercase();
+        if key == "policy_conflict" {
+            continue;
+        }
         if !required.is_empty() && !required.contains(&key) {
             step.status = FullStepStatus::Skipped;
             step.detail = format!("skipped by required-steps policy; {}", step.detail);
@@ -2188,6 +2635,38 @@ fn apply_full_policy_filters(
             step.detail = format!("skipped by skip-steps policy; {}", step.detail);
         }
     }
+}
+
+fn full_policy_conflict_details(
+    skip_steps: &[String],
+    required_steps: &[String],
+    topology_required: bool,
+) -> Option<String> {
+    use std::collections::BTreeSet;
+    if !topology_required {
+        return None;
+    }
+    let req: BTreeSet<String> = required_steps
+        .iter()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .collect();
+    if !req.is_empty() && !req.contains("topology_coverage") {
+        return Some(
+            "--require-topology-coverage was set, but --required-steps excludes topology_coverage; refusing implicit policy neutralization"
+                .to_string(),
+        );
+    }
+    let skip: BTreeSet<String> = skip_steps
+        .iter()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .collect();
+    if skip.contains("topology_coverage") {
+        return Some(
+            "--require-topology-coverage conflicts with --skip-steps topology_coverage; remove one policy flag"
+                .to_string(),
+        );
+    }
+    None
 }
 
 fn shrink_status_matches(target: ExitStatus, candidate: ExitStatus) -> bool {
@@ -2228,7 +2707,11 @@ fn is_preferred_distributed_scenario(path: &Path) -> bool {
 }
 
 fn enforce_strict_run(cli: &Cli, summary: &RunSummary) -> anyhow::Result<()> {
-    if !strict_enabled(cli) {
+    enforce_strict_summary(strict_enabled(cli), summary)
+}
+
+fn enforce_strict_summary(strict: bool, summary: &RunSummary) -> anyhow::Result<()> {
+    if !strict {
         return Ok(());
     }
 

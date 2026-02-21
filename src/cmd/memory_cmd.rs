@@ -433,6 +433,7 @@ mod tests {
                     started_at: "2026-01-01T00:00:00Z".to_string(),
                     finished_at: "2026-01-01T00:00:00Z".to_string(),
                     duration_ms: 0,
+                    duration_ns: 0,
                     tests: None,
                     memory: None,
                     findings: Vec::new(),
