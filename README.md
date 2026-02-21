@@ -1,7 +1,7 @@
 # Fozzy
 
 Fozzy is a deterministic testing engine for systems code.
-It provides one Rust-native runtime and one CLI for test execution, fuzzing, distributed schedule exploration, replay, and shrinking.
+It provides a native runtime for test execution, fuzzing, distributed schedule exploration, replay, and shrinking.
 
 ## Why use Fozzy
 
